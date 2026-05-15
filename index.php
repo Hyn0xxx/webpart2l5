@@ -1,907 +1,878 @@
 <?php
-// Отправляем браузеру правильную кодировку
-header('Content-Type: text/html; charset=UTF-8');
+/**
+ * Lab 5
+ * Авторизация + редактирование формы
+ * Session + Cookies + Backend validation
+ */
+
 session_start();
 
-// Параметры подключения к БД
-$db_user = 'u82464';     
-$db_pass = '8104996';     
-$db_name = 'u82464';      
+header('Content-Type: text/html; charset=UTF-8');
+
+// --------------------
+// ПОДКЛЮЧЕНИЕ К БД
+// --------------------
+
+$db_user = 'u82464';
+$db_pass = '8104996';
+$db_name = 'u82464';
 $db_host = 'localhost';
 
 try {
-    // Подключение к БД
-    $pdo = new PDO("mysql:host=$db_host;dbname=$db_name;charset=utf8", $db_user, $db_pass, [
-        PDO::ATTR_PERSISTENT => true,
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
-    ]);
-    
-    // Создание таблиц, если их нет
-    createTables($pdo);
-    
+    $pdo = new PDO(
+        "mysql:host=$db_host;dbname=$db_name;charset=utf8",
+        $db_user,
+        $db_pass,
+        [
+            PDO::ATTR_PERSISTENT => true,
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
+        ]
+    );
 } catch(PDOException $e) {
-    die('Ошибка подключения к базе данных: ' . $e->getMessage());
+    die('Ошибка подключения к БД: ' . $e->getMessage());
 }
 
-// Функция создания таблиц
-function createTables($pdo) {
-    // Таблица заявок
-    $sql_applications = "
-        CREATE TABLE IF NOT EXISTS applications (
-            id INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
-            full_name VARCHAR(150) NOT NULL,
-            phone VARCHAR(20) NOT NULL,
-            email VARCHAR(100) NOT NULL,
-            birth_date DATE NOT NULL,
-            gender ENUM('male', 'female', 'other') NOT NULL,
-            bio TEXT,
-            contract_accepted TINYINT(1) NOT NULL DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    ";
-    $pdo->exec($sql_applications);
-    
-    // Таблица языков программирования
-    $sql_languages = "
-        CREATE TABLE IF NOT EXISTS programming_languages (
-            id INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
-            name VARCHAR(50) NOT NULL UNIQUE,
-            PRIMARY KEY (id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    ";
-    $pdo->exec($sql_languages);
-    
-    // Заполнение таблицы языков начальными данными
-    $languages = ['Pascal', 'C', 'C++', 'JavaScript', 'PHP', 'Python', 'Java', 'Haskell', 'Clojure', 'Prolog', 'Scala', 'Go'];
-    $stmt = $pdo->prepare("INSERT IGNORE INTO programming_languages (name) VALUES (?)");
-    foreach ($languages as $lang) {
-        $stmt->execute([$lang]);
-    }
-    
-    // Таблица связи заявка-язык (один ко многим)
-    $sql_app_languages = "
-        CREATE TABLE IF NOT EXISTS application_languages (
-            id INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
-            application_id INT(10) UNSIGNED NOT NULL,
-            language_id INT(10) UNSIGNED NOT NULL,
-            PRIMARY KEY (id),
-            FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE,
-            FOREIGN KEY (language_id) REFERENCES programming_languages(id) ON DELETE CASCADE,
-            UNIQUE KEY unique_app_lang (application_id, language_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    ";
-    $pdo->exec($sql_app_languages);
-    
-    // Таблица для хранения учетных записей пользователей
-    $sql_users = "
-        CREATE TABLE IF NOT EXISTS application_users (
-            id INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
-            application_id INT(10) UNSIGNED NOT NULL,
-            username VARCHAR(50) NOT NULL UNIQUE,
-            password_hash VARCHAR(255) NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (id),
-            FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE,
-            UNIQUE KEY unique_username (username)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    ";
-    $pdo->exec($sql_users);
+// --------------------
+// ФУНКЦИИ
+// --------------------
+
+function generateLogin() {
+    return 'user_' . bin2hex(random_bytes(4));
 }
 
-// Функция для генерации случайного логина
-function generateUsername($fullName, $pdo) {
-    // Очищаем ФИО от специальных символов
-    $cleanName = preg_replace('/[^a-zA-Zа-яА-Я]/u', '', $fullName);
-    $cleanName = mb_substr($cleanName, 0, 20);
-    
-    // Транслитерация для русского текста (упрощенная)
-    $translit = [
-        'а' => 'a', 'б' => 'b', 'в' => 'v', 'г' => 'g', 'д' => 'd', 'е' => 'e', 'ё' => 'e',
-        'ж' => 'zh', 'з' => 'z', 'и' => 'i', 'й' => 'y', 'к' => 'k', 'л' => 'l', 'м' => 'm',
-        'н' => 'n', 'о' => 'o', 'п' => 'p', 'р' => 'r', 'с' => 's', 'т' => 't', 'у' => 'u',
-        'ф' => 'f', 'х' => 'h', 'ц' => 'ts', 'ч' => 'ch', 'ш' => 'sh', 'щ' => 'sch', 'ъ' => '',
-        'ы' => 'y', 'ь' => '', 'э' => 'e', 'ю' => 'yu', 'я' => 'ya',
-        'А' => 'A', 'Б' => 'B', 'В' => 'V', 'Г' => 'G', 'Д' => 'D', 'Е' => 'E', 'Ё' => 'E',
-        'Ж' => 'Zh', 'З' => 'Z', 'И' => 'I', 'Й' => 'Y', 'К' => 'K', 'Л' => 'L', 'М' => 'M',
-        'Н' => 'N', 'О' => 'O', 'П' => 'P', 'Р' => 'R', 'С' => 'S', 'Т' => 'T', 'У' => 'U',
-        'Ф' => 'F', 'Х' => 'H', 'Ц' => 'Ts', 'Ч' => 'Ch', 'Ш' => 'Sh', 'Щ' => 'Sch', 'Ъ' => '',
-        'Ы' => 'Y', 'Ь' => '', 'Э' => 'E', 'Ю' => 'Yu', 'Я' => 'Ya'
-    ];
-    
-    $transliterated = strtr($cleanName, $translit);
-    if (empty($transliterated)) {
-        $transliterated = 'user';
-    }
-    
-    $baseUsername = strtolower($transliterated);
-    $username = $baseUsername;
-    $counter = 1;
-    
-    // Проверяем уникальность логина
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM application_users WHERE username = ?");
-    while (true) {
-        $stmt->execute([$username]);
-        if ($stmt->fetchColumn() == 0) {
-            break;
-        }
-        $username = $baseUsername . $counter;
-        $counter++;
-    }
-    
-    return $username;
-}
-
-// Функция для генерации случайного пароля
 function generatePassword($length = 10) {
-    $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()';
+
+    $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
     $password = '';
+
     for ($i = 0; $i < $length; $i++) {
         $password .= $chars[random_int(0, strlen($chars) - 1)];
     }
+
     return $password;
 }
 
-// Получение списка языков для формы
-$languagesList = $pdo->query("SELECT id, name FROM programming_languages ORDER BY name")->fetchAll();
+// --------------------
+// ЯЗЫКИ
+// --------------------
 
-// Функция для сохранения ошибок в Cookies
-function saveErrorsToCookie($errors) {
-    setcookie('form_errors', json_encode($errors), 0, '/');
-}
+$languagesList = $pdo->query("
+    SELECT id, name
+    FROM programming_languages
+    ORDER BY name
+")->fetchAll();
 
-// Функция для получения ошибок из Cookies
-function getErrorsFromCookie() {
-    if (isset($_COOKIE['form_errors'])) {
-        $errors = json_decode($_COOKIE['form_errors'], true);
-        setcookie('form_errors', '', time() - 3600, '/');
-        return $errors;
-    }
-    return [];
-}
+$allowedLanguageIds = array_column($languagesList, 'id');
 
-// Функция для сохранения данных формы в Cookies (на год)
-function saveFormDataToCookie($formData) {
-    $expire = time() + 365 * 24 * 3600;
-    setcookie('saved_form_data', json_encode($formData), $expire, '/');
-}
+// --------------------
+// ВЫХОД
+// --------------------
 
-// Функция для получения сохраненных данных из Cookies
-function getSavedFormDataFromCookie() {
-    if (isset($_COOKIE['saved_form_data'])) {
-        return json_decode($_COOKIE['saved_form_data'], true);
-    }
-    return [];
-}
-
-// Обработка POST-запроса
-$errors = [];
-$success = false;
-$formData = [];
-$generatedCredentials = null;
-$message = '';
-
-// Проверка аутентификации для редактирования
-$isAuthenticated = isset($_SESSION['user_id']) && isset($_SESSION['application_id']);
-$editingApplicationId = null;
-$editingData = null;
-$displayFormData = [];
-
-// Если есть ID заявки в GET и пользователь аутентифицирован
-if ($isAuthenticated && isset($_GET['edit']) && is_numeric($_GET['edit'])) {
-    $editingApplicationId = (int)$_GET['edit'];
-    // Проверяем, что пользователь имеет право редактировать эту заявку
-    if ($_SESSION['application_id'] == $editingApplicationId) {
-        try {
-            // Получаем данные заявки
-            $stmt = $pdo->prepare("
-                SELECT a.*, GROUP_CONCAT(al.language_id) as language_ids
-                FROM applications a
-                LEFT JOIN application_languages al ON a.id = al.application_id
-                WHERE a.id = ?
-                GROUP BY a.id
-            ");
-            $stmt->execute([$editingApplicationId]);
-            $editingData = $stmt->fetch();
-            
-            if ($editingData) {
-                // Преобразуем строку с ID языков в массив
-                $editingData['languages'] = $editingData['language_ids'] ? explode(',', $editingData['language_ids']) : [];
-                $displayFormData = $editingData;
-            }
-        } catch(PDOException $e) {
-            $errors['database'] = 'Ошибка загрузки данных для редактирования';
-        }
-    } else {
-        $errors['auth'] = 'У вас нет прав для редактирования этой заявки';
-    }
-}
-
-// Обработка входа
-if (isset($_POST['login_action']) && $_POST['login_action'] == '1') {
-    $username = trim($_POST['username'] ?? '');
-    $password = $_POST['password'] ?? '';
-    
-    if (empty($username) || empty($password)) {
-        $errors['login'] = 'Пожалуйста, введите логин и пароль';
-    } else {
-        $stmt = $pdo->prepare("
-            SELECT u.*, a.full_name 
-            FROM application_users u
-            JOIN applications a ON u.application_id = a.id
-            WHERE u.username = ?
-        ");
-        $stmt->execute([$username]);
-        $user = $stmt->fetch();
-        
-        if ($user && password_verify($password, $user['password_hash'])) {
-            $_SESSION['user_id'] = $user['id'];
-            $_SESSION['application_id'] = $user['application_id'];
-            $_SESSION['username'] = $user['username'];
-            $_SESSION['full_name'] = $user['full_name'];
-            
-            // Перенаправляем на форму редактирования
-            header('Location: ' . strtok($_SERVER["REQUEST_URI"], '?') . '?edit=' . $user['application_id']);
-            exit;
-        } else {
-            $errors['login'] = 'Неверный логин или пароль';
-        }
-    }
-}
-
-// Обработка выхода
 if (isset($_GET['logout'])) {
+
     session_destroy();
-    header('Location: ' . strtok($_SERVER["REQUEST_URI"], '?'));
-    exit;
+
+    header('Location: index.php');
+    exit();
 }
 
-// Обработка сохранения/обновления данных
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
-    // Получаем данные из формы
-    $formData = [
-        'full_name' => trim($_POST['full_name'] ?? ''),
-        'phone' => trim($_POST['phone'] ?? ''),
-        'email' => trim($_POST['email'] ?? ''),
-        'birth_date' => $_POST['birth_date'] ?? '',
-        'gender' => $_POST['gender'] ?? '',
-        'languages' => $_POST['languages'] ?? [],
-        'bio' => trim($_POST['bio'] ?? ''),
-        'contract' => isset($_POST['contract']) ? 1 : 0
-    ];
-    
-    // Валидация полей
-    if (empty($formData['full_name'])) {
-        $errors['full_name'] = 'Поле "ФИО" обязательно для заполнения.';
-    } elseif (strlen($formData['full_name']) > 150) {
-        $errors['full_name'] = 'ФИО не должно превышать 150 символов.';
-    } elseif (!preg_match('/^[a-zA-Zа-яА-ЯёЁ\s\-]+$/u', $formData['full_name'])) {
-        $errors['full_name'] = 'ФИО может содержать только буквы, пробелы и дефисы.';
-    }
-    
-    if (empty($formData['phone'])) {
-        $errors['phone'] = 'Поле "Телефон" обязательно для заполнения.';
-    } elseif (!preg_match('/^(\+7|8)?[\s\-]?\(?[0-9]{3}\)?[\s\-]?[0-9]{3}[\s\-]?[0-9]{2}[\s\-]?[0-9]{2}$/', $formData['phone'])) {
-        $errors['phone'] = 'Введите корректный номер телефона.';
-    }
-    
-    if (empty($formData['email'])) {
-        $errors['email'] = 'Поле "E-mail" обязательно для заполнения.';
-    } elseif (!filter_var($formData['email'], FILTER_VALIDATE_EMAIL)) {
-        $errors['email'] = 'Введите корректный E-mail адрес.';
-    }
-    
-    if (empty($formData['birth_date'])) {
-        $errors['birth_date'] = 'Поле "Дата рождения" обязательно для заполнения.';
+// --------------------
+// АВТОРИЗАЦИЯ
+// --------------------
+
+$messages = [];
+
+if (isset($_POST['login_submit'])) {
+
+    $login = trim($_POST['login'] ?? '');
+    $password = $_POST['password'] ?? '';
+
+    $stmt = $pdo->prepare("
+        SELECT *
+        FROM applications
+        WHERE login = ?
+    ");
+
+    $stmt->execute([$login]);
+
+    $user = $stmt->fetch();
+
+    if ($user && password_verify($password, $user['password_hash'])) {
+
+        session_regenerate_id(true);
+
+        $_SESSION['user_id'] = $user['id'];
+
+        header('Location: index.php');
+        exit();
+
     } else {
-        $birthDate = DateTime::createFromFormat('Y-m-d', $formData['birth_date']);
-        $today = new DateTime();
-        $minDate = (new DateTime())->modify('-120 years');
-        
-        if (!$birthDate || $birthDate > $today) {
-            $errors['birth_date'] = 'Дата рождения не может быть в будущем.';
-        } elseif ($birthDate < $minDate) {
-            $errors['birth_date'] = 'Укажите реальную дату рождения (не старше 120 лет).';
+
+        $messages[] = "❌ Неверный логин или пароль";
+    }
+}
+
+// --------------------
+// ОБРАБОТКА POST
+// --------------------
+
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
+
+    $errors = false;
+
+    // --------------------
+    // ФИО
+    // --------------------
+
+    if (
+        empty($_POST['full_name']) ||
+        !preg_match('/^[a-zA-Zа-яА-ЯёЁ\s\-]+$/u', $_POST['full_name'])
+    ) {
+
+        setcookie(
+            'full_name_error',
+            'ФИО обязательно и может содержать только буквы, пробелы и дефисы.',
+            time() + 24 * 3600
+        );
+
+        $errors = true;
+    }
+
+    setcookie(
+        'full_name_value',
+        $_POST['full_name'],
+        time() + 30 * 24 * 3600
+    );
+
+    // --------------------
+    // ТЕЛЕФОН
+    // --------------------
+
+    if (
+        empty($_POST['phone']) ||
+        !preg_match(
+            '/^(\+7|8)?[\s\-]?\(?[0-9]{3}\)?[\s\-]?[0-9]{3}[\s\-]?[0-9]{2}[\s\-]?[0-9]{2}$/',
+            $_POST['phone']
+        )
+    ) {
+
+        setcookie(
+            'phone_error',
+            'Введите корректный номер телефона.',
+            time() + 24 * 3600
+        );
+
+        $errors = true;
+    }
+
+    setcookie(
+        'phone_value',
+        $_POST['phone'],
+        time() + 30 * 24 * 3600
+    );
+
+    // --------------------
+    // EMAIL
+    // --------------------
+
+    if (
+        empty($_POST['email']) ||
+        !filter_var($_POST['email'], FILTER_VALIDATE_EMAIL)
+    ) {
+
+        setcookie(
+            'email_error',
+            'Введите корректный e-mail.',
+            time() + 24 * 3600
+        );
+
+        $errors = true;
+    }
+
+    setcookie(
+        'email_value',
+        $_POST['email'],
+        time() + 30 * 24 * 3600
+    );
+
+    // --------------------
+    // ДАТА РОЖДЕНИЯ
+    // --------------------
+
+    if (empty($_POST['birth_date'])) {
+
+        setcookie(
+            'birth_date_error',
+            'Выберите дату рождения.',
+            time() + 24 * 3600
+        );
+
+        $errors = true;
+    }
+
+    setcookie(
+        'birth_date_value',
+        $_POST['birth_date'],
+        time() + 30 * 24 * 3600
+    );
+
+    // --------------------
+    // ПОЛ
+    // --------------------
+
+    if (
+        empty($_POST['gender']) ||
+        !in_array($_POST['gender'], ['male', 'female', 'other'])
+    ) {
+
+        setcookie(
+            'gender_error',
+            'Выберите корректный пол.',
+            time() + 24 * 3600
+        );
+
+        $errors = true;
+    }
+
+    setcookie(
+        'gender_value',
+        $_POST['gender'],
+        time() + 30 * 24 * 3600
+    );
+
+    // --------------------
+    // ЯЗЫКИ
+    // --------------------
+
+    $selectedLangs = $_POST['languages'] ?? [];
+
+    if (empty($selectedLangs)) {
+
+        setcookie(
+            'languages_error',
+            'Выберите хотя бы один язык.',
+            time() + 24 * 3600
+        );
+
+        $errors = true;
+    }
+
+    foreach ($selectedLangs as $langId) {
+
+        if (!in_array($langId, $allowedLanguageIds)) {
+
+            setcookie(
+                'languages_error',
+                'Выбран недопустимый язык.',
+                time() + 24 * 3600
+            );
+
+            $errors = true;
         }
     }
-    
-    $allowedGenders = ['male', 'female', 'other'];
-    if (empty($formData['gender'])) {
-        $errors['gender'] = 'Выберите пол.';
-    } elseif (!in_array($formData['gender'], $allowedGenders)) {
-        $errors['gender'] = 'Недопустимое значение поля "Пол".';
+
+    setcookie(
+        'languages_value',
+        serialize($selectedLangs),
+        time() + 30 * 24 * 3600
+    );
+
+    // --------------------
+    // BIO
+    // --------------------
+
+    setcookie(
+        'bio_value',
+        $_POST['bio'],
+        time() + 30 * 24 * 3600
+    );
+
+    // --------------------
+    // CONTRACT
+    // --------------------
+
+    if (!isset($_POST['contract'])) {
+
+        setcookie(
+            'contract_error',
+            'Необходимо принять контракт.',
+            time() + 24 * 3600
+        );
+
+        $errors = true;
     }
-    
-    $allowedLanguageIds = array_column($languagesList, 'id');
-    if (empty($formData['languages'])) {
-        $errors['languages'] = 'Выберите хотя бы один язык программирования.';
-    } else {
-        foreach ($formData['languages'] as $langId) {
-            if (!in_array($langId, $allowedLanguageIds)) {
-                $errors['languages'] = 'Выбран недопустимый язык программирования.';
-                break;
-            }
+
+    setcookie(
+        'contract_value',
+        isset($_POST['contract']) ? '1' : '',
+        time() + 30 * 24 * 3600
+    );
+
+    // --------------------
+    // ЕСЛИ ЕСТЬ ОШИБКИ
+    // --------------------
+
+    if ($errors) {
+
+        header('Location: index.php');
+        exit();
+    }
+
+    // --------------------
+    // СОХРАНЕНИЕ В БД
+    // --------------------
+
+    try {
+
+        $pdo->beginTransaction();
+
+        // --------------------
+        // UPDATE
+        // --------------------
+
+        if (isset($_SESSION['user_id'])) {
+
+            $appId = $_SESSION['user_id'];
+
+            $stmt = $pdo->prepare("
+                UPDATE applications
+                SET
+                    full_name=?,
+                    phone=?,
+                    email=?,
+                    birth_date=?,
+                    gender=?,
+                    bio=?,
+                    contract_accepted=?
+                WHERE id=?
+            ");
+
+            $stmt->execute([
+                $_POST['full_name'],
+                $_POST['phone'],
+                $_POST['email'],
+                $_POST['birth_date'],
+                $_POST['gender'],
+                $_POST['bio'],
+                1,
+                $appId
+            ]);
+
+            $pdo->prepare("
+                DELETE FROM application_languages
+                WHERE application_id=?
+            ")->execute([$appId]);
+
+        } else {
+
+            // --------------------
+            // INSERT
+            // --------------------
+
+            $login = generateLogin();
+
+            $plainPassword = generatePassword();
+
+            $passwordHash = password_hash(
+                $plainPassword,
+                PASSWORD_DEFAULT
+            );
+
+            $stmt = $pdo->prepare("
+                INSERT INTO applications
+                (
+                    full_name,
+                    phone,
+                    email,
+                    birth_date,
+                    gender,
+                    bio,
+                    contract_accepted,
+                    login,
+                    password_hash
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+
+            $stmt->execute([
+                $_POST['full_name'],
+                $_POST['phone'],
+                $_POST['email'],
+                $_POST['birth_date'],
+                $_POST['gender'],
+                $_POST['bio'],
+                1,
+                $login,
+                $passwordHash
+            ]);
+
+            $appId = $pdo->lastInsertId();
+
+            $_SESSION['generated_login'] = $login;
+            $_SESSION['generated_password'] = $plainPassword;
         }
-    }
-    
-    if (strlen($formData['bio']) > 5000) {
-        $errors['bio'] = 'Биография не должна превышать 5000 символов.';
-    }
-    
-    if (!$formData['contract']) {
-        $errors['contract'] = 'Вы должны ознакомиться с контрактом и принять его условия.';
-    }
-    
-    // Если есть ошибки - сохраняем в Cookies
-    if (!empty($errors)) {
-        saveErrorsToCookie($errors);
-        setcookie('temp_form_data', json_encode($formData), 0, '/');
-        header('Location: ' . strtok($_SERVER["REQUEST_URI"], '?'));
-        exit;
-    }
-    
-    // Сохраняем или обновляем данные
-    if (empty($errors)) {
-        try {
-            $pdo->beginTransaction();
-            
-            if ($isAuthenticated && $editingApplicationId) {
-                // ОБНОВЛЕНИЕ существующей заявки
-                $stmt = $pdo->prepare("
-                    UPDATE applications 
-                    SET full_name = :full_name, phone = :phone, email = :email, 
-                        birth_date = :birth_date, gender = :gender, bio = :bio, 
-                        contract_accepted = :contract_accepted
-                    WHERE id = :id
-                ");
-                
-                $stmt->execute([
-                    ':full_name' => $formData['full_name'],
-                    ':phone' => $formData['phone'],
-                    ':email' => $formData['email'],
-                    ':birth_date' => $formData['birth_date'],
-                    ':gender' => $formData['gender'],
-                    ':bio' => $formData['bio'],
-                    ':contract_accepted' => $formData['contract'],
-                    ':id' => $editingApplicationId
-                ]);
-                
-                // Удаляем старые связи с языками
-                $pdo->prepare("DELETE FROM application_languages WHERE application_id = ?")->execute([$editingApplicationId]);
-                
-                // Вставляем новые связи
-                $stmtLang = $pdo->prepare("INSERT INTO application_languages (application_id, language_id) VALUES (?, ?)");
-                foreach ($formData['languages'] as $langId) {
-                    $stmtLang->execute([$editingApplicationId, $langId]);
-                }
-                
-                $pdo->commit();
-                $success = true;
-                $message = 'Данные успешно обновлены!';
-                
-            } else {
-                // НОВАЯ заявка
-                $stmt = $pdo->prepare("
-                    INSERT INTO applications (full_name, phone, email, birth_date, gender, bio, contract_accepted)
-                    VALUES (:full_name, :phone, :email, :birth_date, :gender, :bio, :contract_accepted)
-                ");
-                
-                $stmt->execute([
-                    ':full_name' => $formData['full_name'],
-                    ':phone' => $formData['phone'],
-                    ':email' => $formData['email'],
-                    ':birth_date' => $formData['birth_date'],
-                    ':gender' => $formData['gender'],
-                    ':bio' => $formData['bio'],
-                    ':contract_accepted' => $formData['contract']
-                ]);
-                
-                $applicationId = $pdo->lastInsertId();
-                
-                // Вставка языков
-                $stmtLang = $pdo->prepare("INSERT INTO application_languages (application_id, language_id) VALUES (?, ?)");
-                foreach ($formData['languages'] as $langId) {
-                    $stmtLang->execute([$applicationId, $langId]);
-                }
-                
-                // Генерация учетных данных
-                $username = generateUsername($formData['full_name'], $pdo);
-                $plainPassword = generatePassword();
-                $passwordHash = password_hash($plainPassword, PASSWORD_DEFAULT);
-                
-                // Сохраняем учетные данные
-                $stmtUser = $pdo->prepare("
-                    INSERT INTO application_users (application_id, username, password_hash)
-                    VALUES (?, ?, ?)
-                ");
-                $stmtUser->execute([$applicationId, $username, $passwordHash]);
-                
-                $pdo->commit();
-                $success = true;
-                $generatedCredentials = [
-                    'username' => $username,
-                    'password' => $plainPassword
-                ];
-                $message = 'Заявка успешно сохранена!';
-                
-                // Автоматически авторизуем пользователя после регистрации
-                $_SESSION['user_id'] = $stmtUser->lastInsertId();
-                $_SESSION['application_id'] = $applicationId;
-                $_SESSION['username'] = $username;
-                $_SESSION['full_name'] = $formData['full_name'];
-            }
-            
-            // Сохраняем данные в Cookies
-            saveFormDataToCookie($formData);
-            setcookie('temp_form_data', '', time() - 3600, '/');
-            
-            if ($isAuthenticated && $editingApplicationId) {
-                header('Location: ' . strtok($_SERVER["REQUEST_URI"], '?') . '?edit=' . $editingApplicationId . '&updated=1');
-            } else {
-                header('Location: ' . strtok($_SERVER["REQUEST_URI"], '?') . '?success=1');
-            }
-            exit;
-            
-        } catch(PDOException $e) {
-            $pdo->rollBack();
-            $errors['database'] = 'Ошибка при сохранении данных: ' . $e->getMessage();
-            saveErrorsToCookie($errors);
-            setcookie('temp_form_data', json_encode($formData), 0, '/');
-            header('Location: ' . strtok($_SERVER["REQUEST_URI"], '?'));
-            exit;
+
+        // --------------------
+        // ЯЗЫКИ
+        // --------------------
+
+        $stmtLang = $pdo->prepare("
+            INSERT INTO application_languages
+            (application_id, language_id)
+            VALUES (?, ?)
+        ");
+
+        foreach ($selectedLangs as $langId) {
+
+            $stmtLang->execute([
+                $appId,
+                $langId
+            ]);
         }
+
+        $pdo->commit();
+
+        setcookie(
+            'save_success',
+            '1',
+            time() + 24 * 3600
+        );
+
+    } catch(PDOException $e) {
+
+        $pdo->rollBack();
+
+        setcookie(
+            'db_error',
+            'Ошибка БД: ' . $e->getMessage(),
+            time() + 24 * 3600
+        );
+    }
+
+    header('Location: index.php');
+    exit();
+}
+
+// --------------------
+// GET ДАННЫЕ
+// --------------------
+
+$errors = [];
+
+// success
+
+if (!empty($_COOKIE['save_success'])) {
+
+    setcookie('save_success', '', 100);
+
+    $messages[] = '✅ Данные успешно сохранены!';
+}
+
+// логин пароль один раз
+
+if (!empty($_SESSION['generated_login'])) {
+
+    $messages[] =
+        '✅ Ваши данные для входа:<br><br>
+        Логин: <b>' . htmlspecialchars($_SESSION['generated_login']) . '</b><br>
+        Пароль: <b>' . htmlspecialchars($_SESSION['generated_password']) . '</b>';
+
+    unset($_SESSION['generated_login']);
+    unset($_SESSION['generated_password']);
+}
+
+// ошибки
+
+$fields = [
+    'full_name',
+    'phone',
+    'email',
+    'birth_date',
+    'gender',
+    'languages',
+    'contract',
+    'db_error'
+];
+
+foreach ($fields as $f) {
+
+    if (!empty($_COOKIE[$f . '_error'])) {
+
+        $errors[$f] = $_COOKIE[$f . '_error'];
+
+        setcookie($f . '_error', '', 100);
     }
 }
 
-// Получаем данные для отображения формы
-if (isset($_GET['success']) && $_GET['success'] == 1) {
-    $success = true;
-    $message = 'Заявка успешно сохранена!';
-}
-if (isset($_GET['updated']) && $_GET['updated'] == 1) {
-    $success = true;
-    $message = 'Данные успешно обновлены!';
+// значения
+
+$values = [];
+
+foreach (
+    [
+        'full_name',
+        'phone',
+        'email',
+        'birth_date',
+        'gender',
+        'bio',
+        'contract',
+        'languages'
+    ] as $f
+) {
+
+    $values[$f] = $_COOKIE[$f . '_value'] ?? '';
 }
 
-$errors = getErrorsFromCookie();
+$values['languages'] =
+    !empty($values['languages'])
+    ? unserialize($values['languages'])
+    : [];
 
-// Получаем временные данные
-$tempFormData = [];
-if (isset($_COOKIE['temp_form_data'])) {
-    $tempFormData = json_decode($_COOKIE['temp_form_data'], true);
-    setcookie('temp_form_data', '', time() - 3600, '/');
-}
+// --------------------
+// ДАННЫЕ ИЗ БД
+// --------------------
 
-// Если не в режиме редактирования, берем сохраненные данные
-if (!$editingData) {
-    $savedFormData = getSavedFormDataFromCookie();
-    if (!empty($tempFormData)) {
-        $displayFormData = $tempFormData;
-    } elseif (!empty($savedFormData) && $_SERVER['REQUEST_METHOD'] != 'POST') {
-        $displayFormData = $savedFormData;
-    } else {
-        $displayFormData = [];
+if (isset($_SESSION['user_id'])) {
+
+    $stmt = $pdo->prepare("
+        SELECT *
+        FROM applications
+        WHERE id=?
+    ");
+
+    $stmt->execute([$_SESSION['user_id']]);
+
+    $userData = $stmt->fetch();
+
+    if ($userData) {
+
+        $values['full_name'] = $userData['full_name'];
+        $values['phone'] = $userData['phone'];
+        $values['email'] = $userData['email'];
+        $values['birth_date'] = $userData['birth_date'];
+        $values['gender'] = $userData['gender'];
+        $values['bio'] = $userData['bio'];
+        $values['contract'] = $userData['contract_accepted'];
+
+        $stmt = $pdo->prepare("
+            SELECT language_id
+            FROM application_languages
+            WHERE application_id=?
+        ");
+
+        $stmt->execute([$_SESSION['user_id']]);
+
+        $values['languages'] =
+            array_column(
+                $stmt->fetchAll(),
+                'language_id'
+            );
     }
 }
 
-function getValue($fieldName, $formData, $default = '') {
-    if (isset($formData[$fieldName])) {
-        return htmlspecialchars($formData[$fieldName]);
-    }
-    return $default;
-}
-
-function isChecked($fieldName, $value, $formData) {
-    if (isset($formData[$fieldName])) {
-        if (is_array($formData[$fieldName])) {
-            return in_array($value, $formData[$fieldName]) ? 'checked' : '';
-        }
-        return $formData[$fieldName] == $value ? 'checked' : '';
-    }
-    return '';
-}
-
-function isSelected($fieldName, $value, $formData) {
-    if (isset($formData[$fieldName]) && is_array($formData[$fieldName])) {
-        return in_array($value, $formData[$fieldName]) ? 'selected' : '';
-    }
-    return '';
-}
 ?>
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Анкета разработчика</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #e8ecf2;
-            min-height: 100vh;
-            padding: 20px;
-        }
-        
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
-            overflow: hidden;
-        }
-        
-        .header {
-            background: #5a6e7c;
-            color: white;
-            padding: 30px;
-            text-align: center;
-            position: relative;
-        }
-        
-        .auth-buttons {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-        }
-        
-        .auth-buttons a {
-            color: white;
-            text-decoration: none;
-            background: rgba(255,255,255,0.2);
-            padding: 8px 15px;
-            border-radius: 20px;
-            transition: all 0.3s ease;
-            font-size: 14px;
-        }
-        
-        .auth-buttons a:hover {
-            background: rgba(255,255,255,0.3);
-        }
-        
-        .header h1 {
-            font-size: 28px;
-            margin-bottom: 10px;
-        }
-        
-        .header p {
-            opacity: 0.85;
-            font-size: 14px;
-        }
-        
-        .form-content {
-            padding: 30px;
-        }
-        
-        .form-group {
-            margin-bottom: 25px;
-        }
-        
-        .form-group label {
-            display: block;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: #333;
-            font-size: 14px;
-        }
-        
-        .form-group label .required {
-            color: #e74c3c;
-            margin-left: 5px;
-        }
-        
-        .form-group input[type="text"],
-        .form-group input[type="tel"],
-        .form-group input[type="email"],
-        .form-group input[type="date"],
-        .form-group select,
-        .form-group textarea {
-            width: 100%;
-            padding: 12px 15px;
-            border: 2px solid #e0e0e0;
-            border-radius: 10px;
-            font-size: 14px;
-            transition: all 0.3s ease;
-            font-family: inherit;
-            background: #fafafa;
-        }
-        
-        .form-group input:focus,
-        .form-group select:focus,
-        .form-group textarea:focus {
-            outline: none;
-            border-color: #5a6e7c;
-            box-shadow: 0 0 0 3px rgba(90, 110, 124, 0.1);
-            background: white;
-        }
-        
-        .radio-group {
-            display: flex;
-            gap: 20px;
-            flex-wrap: wrap;
-        }
-        
-        .radio-group label {
-            display: flex;
-            align-items: center;
-            font-weight: normal;
-            cursor: pointer;
-        }
-        
-        .radio-group input[type="radio"] {
-            margin-right: 8px;
-            cursor: pointer;
-        }
-        
-        .checkbox-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-        }
-        
-        .checkbox-group label {
-            display: flex;
-            align-items: center;
-            font-weight: normal;
-            cursor: pointer;
-            background: #f0f2f5;
-            padding: 8px 15px;
-            border-radius: 20px;
-            transition: all 0.3s ease;
-        }
-        
-        .checkbox-group label:hover {
-            background: #e0e4e8;
-        }
-        
-        .checkbox-group input[type="checkbox"] {
-            margin-right: 8px;
-            cursor: pointer;
-        }
-        
-        select[multiple] {
-            height: auto;
-            min-height: 150px;
-        }
-        
-        select[multiple] option {
-            padding: 8px;
-            cursor: pointer;
-        }
-        
-        select[multiple] option:checked {
-            background: #5a6e7c linear-gradient(0deg, #5a6e7c 0%, #5a6e7c 100%);
-            color: white;
-        }
-        
-        .error-message {
-            color: #e74c3c;
-            font-size: 12px;
-            margin-top: 5px;
-            display: block;
-        }
-        
-        .form-error {
-            border-color: #e74c3c !important;
-            background-color: #fff5f5 !important;
-        }
-        
-        .success-message {
-            background: #e8f5e9;
-            color: #2e7d32;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 25px;
-            border-left: 4px solid #4caf50;
-        }
-        
-        .credentials-box {
-            background: #fff3e0;
-            color: #e65100;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 25px;
-            border-left: 4px solid #ff9800;
-        }
-        
-        .credentials-box strong {
-            display: block;
-            margin-bottom: 10px;
-            font-size: 16px;
-        }
-        
-        .credentials-box code {
-            background: #fff;
-            padding: 5px 10px;
-            border-radius: 5px;
-            display: inline-block;
-            margin-top: 5px;
-            font-size: 14px;
-        }
-        
-        .error-summary {
-            background: #ffebee;
-            color: #c62828;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 25px;
-            border-left: 4px solid #f44336;
-        }
-        
-        .error-summary ul {
-            margin-left: 20px;
-            margin-top: 10px;
-        }
-        
-        .btn-submit {
-            background: #5a6e7c;
-            color: white;
-            border: none;
-            padding: 14px 30px;
-            font-size: 16px;
-            font-weight: 600;
-            border-radius: 10px;
-            cursor: pointer;
-            width: 100%;
-            transition: all 0.2s ease;
-        }
-        
-        .btn-submit:hover {
-            background: #4a5c68;
-            transform: translateY(-1px);
-        }
-        
-        .btn-submit:active {
-            transform: translateY(0);
-        }
-        
-        .login-form {
-            background: #f5f5f5;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 25px;
-        }
-        
-        .login-form h3 {
-            margin-bottom: 15px;
-            color: #333;
-        }
-        
-        .login-form .form-group {
-            margin-bottom: 15px;
-        }
-        
-        .login-form button {
-            background: #4caf50;
-            width: auto;
-            padding: 10px 20px;
-        }
-        
-        .user-info {
-            background: #e3f2fd;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 25px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .user-info span {
-            color: #1976d2;
-            font-weight: 600;
-        }
-        
-        .user-info a {
-            color: #f44336;
-            text-decoration: none;
-        }
-        
-        hr {
-            margin: 20px 0;
-            border: none;
-            height: 1px;
-            background: #e0e0e0;
-        }
-        
-        .info-text {
-            color: #666;
-            font-size: 12px;
-            margin-top: 5px;
-        }
-        
-        @media (max-width: 600px) {
-            .form-content {
-                padding: 20px;
-            }
-            
-            .radio-group {
-                flex-direction: column;
-                gap: 10px;
-            }
-        }
-    </style>
-    <script>
-        function showLoginForm() {
-            var form = document.getElementById('loginForm');
-            if (form.style.display === 'none' || form.style.display === '') {
-                form.style.display = 'block';
-            } else {
-                form.style.display = 'none';
-            }
-        }
-    </script>
+<meta charset="UTF-8">
+
+<title>Lab 5</title>
+
+<style>
+
+body {
+    font-family: Arial;
+    background: #f5f5f5;
+    padding: 20px;
+}
+
+.container {
+    max-width: 900px;
+    margin: auto;
+    background: white;
+    padding: 30px;
+    border-radius: 10px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+input, textarea, select {
+    width: 100%;
+    padding: 10px;
+}
+
+.form-error {
+    border: 2px solid red;
+}
+
+.error-message {
+    color: red;
+    font-size: 14px;
+}
+
+.success-banner {
+    background: #d4edda;
+    padding: 15px;
+    margin-bottom: 20px;
+}
+
+.login-block {
+    background: #eee;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+button {
+    padding: 10px 20px;
+}
+
+</style>
+
 </head>
+
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="auth-buttons">
-                <?php if ($isAuthenticated): ?>
-                    <span style="margin-right: 10px;">👋 <?= htmlspecialchars($_SESSION['full_name']) ?></span>
-                    <a href="?logout=1">🚪 Выйти</a>
-                <?php else: ?>
-                    <a href="#" onclick="showLoginForm(); return false;">🔑 Войти</a>
-                <?php endif; ?>
-            </div>
-            <h1>📝 Анкета разработчика</h1>
-            <p>Заполните форму, чтобы стать частью нашего сообщества</p>
-        </div>
-        
-        <div class="form-content">
-            <?php if ($success && !empty($message)): ?>
-                <div class="success-message">
-                    ✅ <?= htmlspecialchars($message) ?>
-                </div>
-            <?php elseif ($success): ?>
-                <div class="success-message">
-                    ✅ Спасибо! Ваши данные успешно сохранены.
-                </div>
-            <?php endif; ?>
-            
-            <?php if ($generatedCredentials): ?>
-                <div class="credentials-box">
-                    <strong>🔐 Ваши учетные данные для входа:</strong>
-                    <div>Логин: <code><?= htmlspecialchars($generatedCredentials['username']) ?></code></div>
-                    <div>Пароль: <code><?= htmlspecialchars($generatedCredentials['password']) ?></code></div>
-                    <div class="info-text" style="margin-top: 10px;">⚠️ Сохраните эти данные! Они понадобятся вам для редактирования заявки.</div>
-                </div>
-            <?php endif; ?>
-            
-            <?php if (!$isAuthenticated && !$editingData): ?>
-                <div class="login-form" id="loginForm" style="display: none;">
-                    <h3>🔐 Вход для редактирования заявки</h3>
-                    <form method="POST" action="">
-                        <input type="hidden" name="login_action" value="1">
-                        <div class="form-group">
-                            <label>Логин</label>
-                            <input type="text" name="username" required>
-                        </div>
-                        <div class="form-group">
-                            <label>Пароль</label>
-                            <input type="password" name="password" required>
-                        </div>
-                        <?php if (isset($errors['login'])): ?>
-                            <span class="error-message"><?= $errors['login'] ?></span>
-                        <?php endif; ?>
-                        <button type="submit" class="btn-submit">Войти</button>
-                    </form>
-                </div>
-            <?php endif; ?>
-            
-            <?php if ($isAuthenticated && $editingData): ?>
-                <div class="user-info">
-                    <span>✏️ Режим редактирования заявки #<?= $editingApplicationId ?></span>
-                    <a href="?logout=1">Выйти</a>
-                </div>
-            <?php endif; ?>
-            
-            <?php if (!empty($errors) && !isset($errors['login'])): ?>
-                <div class="error-summary">
-                    <strong>❌ Пожалуйста, исправьте следующие ошибки:</
+
+<div class="container">
+
+<h1>📝 Анкета разработчика</h1>
+
+<?php foreach($messages as $m): ?>
+
+<div class="success-banner">
+    <?= $m ?>
+</div>
+
+<?php endforeach; ?>
+
+<?php if (!isset($_SESSION['user_id'])): ?>
+
+<div class="login-block">
+
+<h2>Авторизация</h2>
+
+<form method="POST">
+
+<div class="form-group">
+    <input type="text" name="login" placeholder="Логин">
+</div>
+
+<div class="form-group">
+    <input type="password" name="password" placeholder="Пароль">
+</div>
+
+<button type="submit" name="login_submit">
+    Войти
+</button>
+
+</form>
+
+</div>
+
+<?php else: ?>
+
+<p>
+    ✅ Вы авторизованы
+    <a href="?logout=1">Выйти</a>
+</p>
+
+<?php endif; ?>
+
+<form action="" method="POST">
+
+<div class="form-group">
+
+<label>ФИО *</label>
+
+<input
+    type="text"
+    name="full_name"
+    value="<?= htmlspecialchars($values['full_name']) ?>"
+    class="<?= isset($errors['full_name']) ? 'form-error' : '' ?>"
+>
+
+<?php if(isset($errors['full_name'])): ?>
+
+<span class="error-message">
+    <?= $errors['full_name'] ?>
+</span>
+
+<?php endif; ?>
+
+</div>
+
+<div class="form-group">
+
+<label>Телефон *</label>
+
+<input
+    type="tel"
+    name="phone"
+    value="<?= htmlspecialchars($values['phone']) ?>"
+    class="<?= isset($errors['phone']) ? 'form-error' : '' ?>"
+>
+
+<?php if(isset($errors['phone'])): ?>
+
+<span class="error-message">
+    <?= $errors['phone'] ?>
+</span>
+
+<?php endif; ?>
+
+</div>
+
+<div class="form-group">
+
+<label>Email *</label>
+
+<input
+    type="email"
+    name="email"
+    value="<?= htmlspecialchars($values['email']) ?>"
+    class="<?= isset($errors['email']) ? 'form-error' : '' ?>"
+>
+
+<?php if(isset($errors['email'])): ?>
+
+<span class="error-message">
+    <?= $errors['email'] ?>
+</span>
+
+<?php endif; ?>
+
+</div>
+
+<div class="form-group">
+
+<label>Дата рождения *</label>
+
+<input
+    type="date"
+    name="birth_date"
+    value="<?= htmlspecialchars($values['birth_date']) ?>"
+    class="<?= isset($errors['birth_date']) ? 'form-error' : '' ?>"
+>
+
+<?php if(isset($errors['birth_date'])): ?>
+
+<span class="error-message">
+    <?= $errors['birth_date'] ?>
+</span>
+
+<?php endif; ?>
+
+</div>
+
+<div class="form-group">
+
+<label>Пол *</label>
+
+<input
+    type="radio"
+    name="gender"
+    value="male"
+    <?= ($values['gender'] == 'male') ? 'checked' : '' ?>
+> Мужской
+
+<input
+    type="radio"
+    name="gender"
+    value="female"
+    <?= ($values['gender'] == 'female') ? 'checked' : '' ?>
+> Женский
+
+<input
+    type="radio"
+    name="gender"
+    value="other"
+    <?= ($values['gender'] == 'other') ? 'checked' : '' ?>
+> Другой
+
+<?php if(isset($errors['gender'])): ?>
+
+<span class="error-message">
+    <?= $errors['gender'] ?>
+</span>
+
+<?php endif; ?>
+
+</div>
+
+<div class="form-group">
+
+<label>Любимые языки *</label>
+
+<select
+    name="languages[]"
+    multiple
+    class="<?= isset($errors['languages']) ? 'form-error' : '' ?>"
+>
+
+<?php foreach ($languagesList as $lang): ?>
+
+<option
+    value="<?= $lang['id'] ?>"
+    <?= in_array($lang['id'], $values['languages']) ? 'selected' : '' ?>
+>
+    <?= htmlspecialchars($lang['name']) ?>
+</option>
+
+<?php endforeach; ?>
+
+</select>
+
+<?php if(isset($errors['languages'])): ?>
+
+<span class="error-message">
+    <?= $errors['languages'] ?>
+</span>
+
+<?php endif; ?>
+
+</div>
+
+<div class="form-group">
+
+<label>Биография</label>
+
+<textarea name="bio"><?= htmlspecialchars($values['bio']) ?></textarea>
+
+</div>
+
+<div class="form-group">
+
+<input
+    type="checkbox"
+    name="contract"
+    value="1"
+    <?= !empty($values['contract']) ? 'checked' : '' ?>
+>
+
+Согласен с условиями *
+
+<?php if(isset($errors['contract'])): ?>
+
+<span class="error-message">
+    <?= $errors['contract'] ?>
+</span>
+
+<?php endif; ?>
+
+</div>
+
+<button type="submit">
+    Сохранить
+</button>
+
+</form>
+
+</div>
+
+</body>
+</html>
