@@ -72,6 +72,7 @@ if (isset($_GET['logout'])) {
 
 $messages = [];
 $loginError = '';
+$showLoginForm = !isset($_SESSION['user_id']); // Показывать форму авторизации только если не авторизован
 
 if (isset($_POST['login_submit'])) {
     $login = trim($_POST['login'] ?? '');
@@ -103,6 +104,8 @@ if (isset($_POST['login_submit'])) {
 // ОБРАБОТКА ОСНОВНОЙ ФОРМЫ
 // --------------------
 
+$justSaved = false; // Флаг для отображения сообщения без редиректа
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
     $errors = false;
 
@@ -111,10 +114,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
         empty($_POST['full_name']) ||
         !preg_match('/^[a-zA-Zа-яА-ЯёЁ\s\-]+$/u', $_POST['full_name'])
     ) {
-        setcookie('full_name_error', 'ФИО обязательно и может содержать только буквы, пробелы и дефисы.', time() + 24 * 3600);
+        $errorMessages['full_name'] = 'ФИО обязательно и может содержать только буквы, пробелы и дефисы.';
         $errors = true;
     }
-    setcookie('full_name_value', $_POST['full_name'], time() + 30 * 24 * 3600);
 
     // ТЕЛЕФОН
     if (
@@ -124,182 +126,148 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
             $_POST['phone']
         )
     ) {
-        setcookie('phone_error', 'Введите корректный номер телефона.', time() + 24 * 3600);
+        $errorMessages['phone'] = 'Введите корректный номер телефона.';
         $errors = true;
     }
-    setcookie('phone_value', $_POST['phone'], time() + 30 * 24 * 3600);
 
     // EMAIL
     if (
         empty($_POST['email']) ||
         !filter_var($_POST['email'], FILTER_VALIDATE_EMAIL)
     ) {
-        setcookie('email_error', 'Введите корректный e-mail.', time() + 24 * 3600);
+        $errorMessages['email'] = 'Введите корректный e-mail.';
         $errors = true;
     }
-    setcookie('email_value', $_POST['email'], time() + 30 * 24 * 3600);
 
     // ДАТА
     if (empty($_POST['birth_date'])) {
-        setcookie('birth_date_error', 'Выберите дату рождения.', time() + 24 * 3600);
+        $errorMessages['birth_date'] = 'Выберите дату рождения.';
         $errors = true;
     }
-    setcookie('birth_date_value', $_POST['birth_date'], time() + 30 * 24 * 3600);
 
     // ПОЛ
     if (
         empty($_POST['gender']) ||
         !in_array($_POST['gender'], ['male', 'female', 'other'])
     ) {
-        setcookie('gender_error', 'Выберите пол.', time() + 24 * 3600);
+        $errorMessages['gender'] = 'Выберите пол.';
         $errors = true;
     }
-    setcookie('gender_value', $_POST['gender'], time() + 30 * 24 * 3600);
 
     // ЯЗЫКИ
     $selectedLangs = $_POST['languages'] ?? [];
     if (empty($selectedLangs)) {
-        setcookie('languages_error', 'Выберите хотя бы один язык.', time() + 24 * 3600);
+        $errorMessages['languages'] = 'Выберите хотя бы один язык.';
         $errors = true;
     }
     foreach ($selectedLangs as $langId) {
         if (!in_array($langId, $allowedLanguageIds)) {
-            setcookie('languages_error', 'Выбран недопустимый язык.', time() + 24 * 3600);
+            $errorMessages['languages'] = 'Выбран недопустимый язык.';
             $errors = true;
         }
     }
-    setcookie('languages_value', serialize($selectedLangs), time() + 30 * 24 * 3600);
-
-    // BIO
-    setcookie('bio_value', $_POST['bio'], time() + 30 * 24 * 3600);
 
     // CONTRACT
     if (!isset($_POST['contract'])) {
-        setcookie('contract_error', 'Необходимо принять условия.', time() + 24 * 3600);
+        $errorMessages['contract'] = 'Необходимо принять условия.';
         $errors = true;
     }
-    setcookie('contract_value', isset($_POST['contract']) ? '1' : '', time() + 30 * 24 * 3600);
 
-    // ЕСЛИ ОШИБКИ
-    if ($errors) {
-        header('Location: index.php');
-        exit();
-    }
+    // Сохраняем значения для отображения
+    $formValues = [
+        'full_name' => $_POST['full_name'] ?? '',
+        'phone' => $_POST['phone'] ?? '',
+        'email' => $_POST['email'] ?? '',
+        'birth_date' => $_POST['birth_date'] ?? '',
+        'gender' => $_POST['gender'] ?? '',
+        'bio' => $_POST['bio'] ?? '',
+        'contract' => isset($_POST['contract']),
+        'languages' => $selectedLangs
+    ];
 
-    // --------------------
-    // СОХРАНЕНИЕ В БД
-    // --------------------
+    // ЕСЛИ НЕТ ОШИБОК - СОХРАНЯЕМ
+    if (!$errors) {
+        try {
+            $pdo->beginTransaction();
 
-    try {
-        $pdo->beginTransaction();
+            // UPDATE (если пользователь авторизован)
+            if (isset($_SESSION['user_id'])) {
+                $appId = $_SESSION['user_id'];
+                $stmt = $pdo->prepare("
+                    UPDATE applications
+                    SET full_name=?, phone=?, email=?, birth_date=?, gender=?, bio=?, contract_accepted=?
+                    WHERE id=?
+                ");
+                $stmt->execute([
+                    $_POST['full_name'],
+                    $_POST['phone'],
+                    $_POST['email'],
+                    $_POST['birth_date'],
+                    $_POST['gender'],
+                    $_POST['bio'],
+                    1,
+                    $appId
+                ]);
+                
+                $pdo->prepare("DELETE FROM application_languages WHERE application_id=?")->execute([$appId]);
+                $messages[] = '✅ Данные успешно обновлены!';
+            } else {
+                // INSERT (новая анкета)
+                $login = generateLogin();
+                $plainPassword = generatePassword();
+                $passwordHash = password_hash($plainPassword, PASSWORD_DEFAULT);
+                
+                $stmt = $pdo->prepare("
+                    INSERT INTO applications (full_name, phone, email, birth_date, gender, bio, contract_accepted, login, password_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ");
+                $stmt->execute([
+                    $_POST['full_name'],
+                    $_POST['phone'],
+                    $_POST['email'],
+                    $_POST['birth_date'],
+                    $_POST['gender'],
+                    $_POST['bio'],
+                    1,
+                    $login,
+                    $passwordHash
+                ]);
+                $appId = $pdo->lastInsertId();
+                
+                // Сохраняем логин и пароль для отображения
+                $_SESSION['generated_login'] = $login;
+                $_SESSION['generated_password'] = $plainPassword;
+                $justSaved = true;
+                
+                $messages[] = '✅ Данные успешно сохранены!';
+            }
 
-        // UPDATE (если пользователь авторизован)
-        if (isset($_SESSION['user_id'])) {
-            $appId = $_SESSION['user_id'];
-            $stmt = $pdo->prepare("
-                UPDATE applications
-                SET full_name=?, phone=?, email=?, birth_date=?, gender=?, bio=?, contract_accepted=?
-                WHERE id=?
-            ");
-            $stmt->execute([
-                $_POST['full_name'],
-                $_POST['phone'],
-                $_POST['email'],
-                $_POST['birth_date'],
-                $_POST['gender'],
-                $_POST['bio'],
-                1,
-                $appId
-            ]);
+            // Сохраняем языки
+            $stmtLang = $pdo->prepare("INSERT INTO application_languages (application_id, language_id) VALUES (?, ?)");
+            foreach ($selectedLangs as $langId) {
+                $stmtLang->execute([$appId, $langId]);
+            }
+
+            $pdo->commit();
             
-            // Обновляем языки
-            $pdo->prepare("DELETE FROM application_languages WHERE application_id=?")->execute([$appId]);
-        } else {
-            // INSERT (новая анкета)
-            $login = generateLogin();
-            $plainPassword = generatePassword();
-            $passwordHash = password_hash($plainPassword, PASSWORD_DEFAULT);
-            
-            $stmt = $pdo->prepare("
-                INSERT INTO applications (full_name, phone, email, birth_date, gender, bio, contract_accepted, login, password_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ");
-            $stmt->execute([
-                $_POST['full_name'],
-                $_POST['phone'],
-                $_POST['email'],
-                $_POST['birth_date'],
-                $_POST['gender'],
-                $_POST['bio'],
-                1,
-                $login,
-                $passwordHash
-            ]);
-            $appId = $pdo->lastInsertId();
-            
-            // Сохраняем логин и пароль в сессию для отображения пользователю
-            $_SESSION['generated_login'] = $login;
-            $_SESSION['generated_password'] = $plainPassword;
+        } catch(PDOException $e) {
+            $pdo->rollBack();
+            $errorMessages['db_error'] = 'Ошибка БД: ' . $e->getMessage();
         }
-
-        // Сохраняем выбранные языки
-        $stmtLang = $pdo->prepare("INSERT INTO application_languages (application_id, language_id) VALUES (?, ?)");
-        foreach ($selectedLangs as $langId) {
-            $stmtLang->execute([$appId, $langId]);
-        }
-
-        $pdo->commit();
-        setcookie('save_success', '1', time() + 24 * 3600);
-        
-    } catch(PDOException $e) {
-        $pdo->rollBack();
-        setcookie('db_error', 'Ошибка БД: ' . $e->getMessage(), time() + 24 * 3600);
     }
-
-    header('Location: index.php');
-    exit();
 }
 
 // --------------------
-// GET ДАННЫЕ
+// ЗАГРУЗКА ДАННЫХ ДЛЯ ФОРМЫ
 // --------------------
 
-$errors = [];
-
-// Сообщение об успешном сохранении
-if (!empty($_COOKIE['save_success'])) {
-    setcookie('save_success', '', 100);
-    $messages[] = '✅ Данные успешно сохранены!';
-}
-
-// Отображение сгенерированных логина и пароля (при первой отправке)
-if (!empty($_SESSION['generated_login'])) {
-    $messages[] = "✅ Ваши данные для входа:<br><br>
-        Логин: <b>" . htmlspecialchars($_SESSION['generated_login']) . "</b><br>
-        Пароль: <b>" . htmlspecialchars($_SESSION['generated_password']) . "</b><br><br>
-        Сохраните их! Теперь вы можете авторизоваться и редактировать свои данные.";
-    unset($_SESSION['generated_login']);
-    unset($_SESSION['generated_password']);
-}
-
-// Сбор ошибок
-$fields = ['full_name', 'phone', 'email', 'birth_date', 'gender', 'languages', 'contract', 'db_error'];
-foreach ($fields as $f) {
-    if (!empty($_COOKIE[$f . '_error'])) {
-        $errors[$f] = $_COOKIE[$f . '_error'];
-        setcookie($f . '_error', '', 100);
-    }
-}
-
-// Сбор значений
-$values = [];
-foreach (['full_name', 'phone', 'email', 'birth_date', 'gender', 'bio', 'contract', 'languages'] as $f) {
-    $values[$f] = $_COOKIE[$f . '_value'] ?? '';
-}
-$values['languages'] = !empty($values['languages']) ? unserialize($values['languages']) : [];
-
+// Если есть отправленные значения из формы (при ошибке)
+if (isset($formValues)) {
+    $values = $formValues;
+    $errors = $errorMessages ?? [];
+} 
 // Если пользователь авторизован, загружаем его данные из БД
-if (isset($_SESSION['user_id'])) {
+elseif (isset($_SESSION['user_id'])) {
     $stmt = $pdo->prepare("SELECT * FROM applications WHERE id=?");
     $stmt->execute([$_SESSION['user_id']]);
     $userData = $stmt->fetch();
@@ -317,6 +285,31 @@ if (isset($_SESSION['user_id'])) {
         $stmt->execute([$_SESSION['user_id']]);
         $values['languages'] = array_column($stmt->fetchAll(), 'language_id');
     }
+} 
+// Пустая форма для нового пользователя
+else {
+    $values = [
+        'full_name' => '',
+        'phone' => '',
+        'email' => '',
+        'birth_date' => '',
+        'gender' => '',
+        'bio' => '',
+        'contract' => false,
+        'languages' => []
+    ];
+    $errors = [];
+}
+
+// Добавляем сообщение с логином и паролем, если они есть в сессии
+if (!empty($_SESSION['generated_login']) && $justSaved) {
+    $loginMessage = "✅ Ваши данные для входа:<br><br>
+        Логин: <b>" . htmlspecialchars($_SESSION['generated_login']) . "</b><br>
+        Пароль: <b>" . htmlspecialchars($_SESSION['generated_password']) . "</b><br><br>
+        ⚠️ Сохраните их! Теперь вы можете авторизоваться и редактировать свои данные.";
+    $messages[] = $loginMessage;
+    unset($_SESSION['generated_login']);
+    unset($_SESSION['generated_password']);
 }
 ?>
 
@@ -335,7 +328,7 @@ if (isset($_SESSION['user_id'])) {
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #800020;  /* Бордовый фон */
+            background: #800020;
             min-height: 100vh;
             padding: 20px;
         }
@@ -362,8 +355,8 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .header {
-            background: #9E9E9E;  /* Nardo Gray */
-            color: #800020;  /* Бордовый текст */
+            background: #9E9E9E;
+            color: #800020;
             padding: 30px;
             text-align: center;
         }
@@ -489,8 +482,8 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .btn-submit {
-            background: #9E9E9E;  /* Nardo Gray */
-            color: #800020;  /* Бордовый текст */
+            background: #9E9E9E;
+            color: #800020;
             border: none;
             padding: 14px 30px;
             font-size: 1em;
@@ -502,7 +495,7 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .btn-submit:hover {
-            background: #757575;  /* Темнее Nardo Gray */
+            background: #757575;
             transform: translateY(-2px);
             box-shadow: 0 5px 20px rgba(128, 0, 32, 0.4);
         }
@@ -578,6 +571,7 @@ if (isset($_SESSION['user_id'])) {
         
         <div class="form-content">
             <?php 
+            // Выводим все сообщения
             foreach($messages as $m) {
                 echo "<div class='success-banner'>$m</div>";
             }
@@ -617,10 +611,10 @@ if (isset($_SESSION['user_id'])) {
             <?php endif; ?>
 
             <!-- ОСНОВНАЯ ФОРМА -->
-            <form action="" method="POST">
+            <form method="POST">
                 <div class="form-group">
                     <label>ФИО *</label>
-                    <input type="text" name="full_name" value="<?= htmlspecialchars($values['full_name']) ?>" class="<?= isset($errors['full_name']) ? 'form-error' : '' ?>">
+                    <input type="text" name="full_name" value="<?= htmlspecialchars($values['full_name'] ?? '') ?>" class="<?= isset($errors['full_name']) ? 'form-error' : '' ?>">
                     <?php if(isset($errors['full_name'])): ?>
                         <span class="error-message"><?= $errors['full_name'] ?></span>
                     <?php endif; ?>
@@ -628,7 +622,7 @@ if (isset($_SESSION['user_id'])) {
 
                 <div class="form-group">
                     <label>Телефон *</label>
-                    <input type="tel" name="phone" value="<?= htmlspecialchars($values['phone']) ?>" class="<?= isset($errors['phone']) ? 'form-error' : '' ?>">
+                    <input type="tel" name="phone" value="<?= htmlspecialchars($values['phone'] ?? '') ?>" class="<?= isset($errors['phone']) ? 'form-error' : '' ?>">
                     <?php if(isset($errors['phone'])): ?>
                         <span class="error-message"><?= $errors['phone'] ?></span>
                     <?php endif; ?>
@@ -636,7 +630,7 @@ if (isset($_SESSION['user_id'])) {
 
                 <div class="form-group">
                     <label>E-mail *</label>
-                    <input type="email" name="email" value="<?= htmlspecialchars($values['email']) ?>" class="<?= isset($errors['email']) ? 'form-error' : '' ?>">
+                    <input type="email" name="email" value="<?= htmlspecialchars($values['email'] ?? '') ?>" class="<?= isset($errors['email']) ? 'form-error' : '' ?>">
                     <?php if(isset($errors['email'])): ?>
                         <span class="error-message"><?= $errors['email'] ?></span>
                     <?php endif; ?>
@@ -644,7 +638,7 @@ if (isset($_SESSION['user_id'])) {
 
                 <div class="form-group">
                     <label>Дата рождения *</label>
-                    <input type="date" name="birth_date" value="<?= htmlspecialchars($values['birth_date']) ?>" class="<?= isset($errors['birth_date']) ? 'form-error' : '' ?>">
+                    <input type="date" name="birth_date" value="<?= htmlspecialchars($values['birth_date'] ?? '') ?>" class="<?= isset($errors['birth_date']) ? 'form-error' : '' ?>">
                     <?php if(isset($errors['birth_date'])): ?>
                         <span class="error-message"><?= $errors['birth_date'] ?></span>
                     <?php endif; ?>
@@ -654,13 +648,13 @@ if (isset($_SESSION['user_id'])) {
                     <label>Пол *</label>
                     <div class="radio-group">
                         <label>
-                            <input type="radio" name="gender" value="male" <?= ($values['gender'] == 'male') ? 'checked' : '' ?>> Мужской
+                            <input type="radio" name="gender" value="male" <?= (($values['gender'] ?? '') == 'male') ? 'checked' : '' ?>> Мужской
                         </label>
                         <label>
-                            <input type="radio" name="gender" value="female" <?= ($values['gender'] == 'female') ? 'checked' : '' ?>> Женский
+                            <input type="radio" name="gender" value="female" <?= (($values['gender'] ?? '') == 'female') ? 'checked' : '' ?>> Женский
                         </label>
                         <label>
-                            <input type="radio" name="gender" value="other" <?= ($values['gender'] == 'other') ? 'checked' : '' ?>> Другой
+                            <input type="radio" name="gender" value="other" <?= (($values['gender'] ?? '') == 'other') ? 'checked' : '' ?>> Другой
                         </label>
                     </div>
                     <?php if(isset($errors['gender'])): ?>
@@ -672,7 +666,7 @@ if (isset($_SESSION['user_id'])) {
                     <label>Любимые языки программирования *</label>
                     <select name="languages[]" multiple class="<?= isset($errors['languages']) ? 'form-error' : '' ?>">
                         <?php foreach ($languagesList as $lang): ?>
-                            <option value="<?= $lang['id'] ?>" <?= in_array($lang['id'], $values['languages']) ? 'selected' : '' ?>>
+                            <option value="<?= $lang['id'] ?>" <?= in_array($lang['id'], $values['languages'] ?? []) ? 'selected' : '' ?>>
                                 <?= htmlspecialchars($lang['name']) ?>
                             </option>
                         <?php endforeach; ?>
@@ -684,7 +678,7 @@ if (isset($_SESSION['user_id'])) {
 
                 <div class="form-group">
                     <label>Биография</label>
-                    <textarea name="bio"><?= htmlspecialchars($values['bio']) ?></textarea>
+                    <textarea name="bio"><?= htmlspecialchars($values['bio'] ?? '') ?></textarea>
                 </div>
 
                 <div class="form-group">
