@@ -193,7 +193,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
     try {
         $pdo->beginTransaction();
 
-        // UPDATE
+        // UPDATE (если пользователь авторизован)
         if (isset($_SESSION['user_id'])) {
             $appId = $_SESSION['user_id'];
             $stmt = $pdo->prepare("
@@ -211,12 +211,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
                 1,
                 $appId
             ]);
+            
+            // Обновляем языки
             $pdo->prepare("DELETE FROM application_languages WHERE application_id=?")->execute([$appId]);
         } else {
-            // INSERT
+            // INSERT (новая анкета)
             $login = generateLogin();
             $plainPassword = generatePassword();
             $passwordHash = password_hash($plainPassword, PASSWORD_DEFAULT);
+            
             $stmt = $pdo->prepare("
                 INSERT INTO applications (full_name, phone, email, birth_date, gender, bio, contract_accepted, login, password_hash)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -233,11 +236,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
                 $passwordHash
             ]);
             $appId = $pdo->lastInsertId();
+            
+            // Сохраняем логин и пароль в сессию для отображения пользователю
             $_SESSION['generated_login'] = $login;
             $_SESSION['generated_password'] = $plainPassword;
         }
 
-        // ЯЗЫКИ
+        // Сохраняем выбранные языки
         $stmtLang = $pdo->prepare("INSERT INTO application_languages (application_id, language_id) VALUES (?, ?)");
         foreach ($selectedLangs as $langId) {
             $stmtLang->execute([$appId, $langId]);
@@ -245,6 +250,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
 
         $pdo->commit();
         setcookie('save_success', '1', time() + 24 * 3600);
+        
     } catch(PDOException $e) {
         $pdo->rollBack();
         setcookie('db_error', 'Ошибка БД: ' . $e->getMessage(), time() + 24 * 3600);
@@ -260,19 +266,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
 
 $errors = [];
 
+// Сообщение об успешном сохранении
 if (!empty($_COOKIE['save_success'])) {
     setcookie('save_success', '', 100);
     $messages[] = '✅ Данные успешно сохранены!';
 }
 
-// ЛОГИН И ПАРОЛЬ ОДИН РАЗ
+// Отображение сгенерированных логина и пароля (при первой отправке)
 if (!empty($_SESSION['generated_login'])) {
-    $messages[] = "✅ Ваши данные для входа:<br><br>Логин: <b>" . htmlspecialchars($_SESSION['generated_login']) . "</b><br>Пароль: <b>" . htmlspecialchars($_SESSION['generated_password']) . "</b>";
+    $messages[] = "✅ Ваши данные для входа:<br><br>
+        Логин: <b>" . htmlspecialchars($_SESSION['generated_login']) . "</b><br>
+        Пароль: <b>" . htmlspecialchars($_SESSION['generated_password']) . "</b><br><br>
+        Сохраните их! Теперь вы можете авторизоваться и редактировать свои данные.";
     unset($_SESSION['generated_login']);
     unset($_SESSION['generated_password']);
 }
 
-// ОШИБКИ
+// Сбор ошибок
 $fields = ['full_name', 'phone', 'email', 'birth_date', 'gender', 'languages', 'contract', 'db_error'];
 foreach ($fields as $f) {
     if (!empty($_COOKIE[$f . '_error'])) {
@@ -281,14 +291,14 @@ foreach ($fields as $f) {
     }
 }
 
-// COOKIE VALUES
+// Сбор значений
 $values = [];
 foreach (['full_name', 'phone', 'email', 'birth_date', 'gender', 'bio', 'contract', 'languages'] as $f) {
     $values[$f] = $_COOKIE[$f . '_value'] ?? '';
 }
 $values['languages'] = !empty($values['languages']) ? unserialize($values['languages']) : [];
 
-// ДАННЫЕ АВТОРИЗОВАННОГО
+// Если пользователь авторизован, загружаем его данные из БД
 if (isset($_SESSION['user_id'])) {
     $stmt = $pdo->prepare("SELECT * FROM applications WHERE id=?");
     $stmt->execute([$_SESSION['user_id']]);
@@ -325,7 +335,7 @@ if (isset($_SESSION['user_id'])) {
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #800020;  /* Бордовый цвет */
+            background: #800020;  /* Бордовый фон */
             min-height: 100vh;
             padding: 20px;
         }
@@ -352,11 +362,10 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .header {
-            background: #FFFDD0;  /* Кремовый */
+            background: #9E9E9E;  /* Nardo Gray */
             color: #800020;  /* Бордовый текст */
             padding: 30px;
             text-align: center;
-            border-bottom: 3px solid #800020;
         }
 
         .header h1 {
@@ -365,9 +374,10 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .header p {
-            opacity: 0.8;
+            opacity: 0.9;
             font-size: 0.95em;
             color: #800020;
+            font-weight: 500;
         }
 
         .form-content {
@@ -406,8 +416,8 @@ if (isset($_SESSION['user_id'])) {
         select:focus,
         textarea:focus {
             outline: none;
-            border-color: #FFFDD0;
-            box-shadow: 0 0 0 3px rgba(255, 253, 208, 0.3);
+            border-color: #9E9E9E;
+            box-shadow: 0 0 0 3px rgba(158, 158, 158, 0.3);
         }
 
         .form-error {
@@ -423,13 +433,13 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .success-banner {
-            background: linear-gradient(135deg, #FFFDD0 0%, #FFE4B5 100%);
+            background: #9E9E9E;
             color: #800020;
             padding: 15px 20px;
             border-radius: 10px;
             margin-bottom: 20px;
             animation: fadeIn 0.5s ease-out;
-            border-left: 4px solid #800020;
+            font-weight: 500;
         }
 
         @keyframes fadeIn {
@@ -479,9 +489,9 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .btn-submit {
-            background: #FFFDD0;  /* Кремовый */
+            background: #9E9E9E;  /* Nardo Gray */
             color: #800020;  /* Бордовый текст */
-            border: 2px solid #800020;
+            border: none;
             padding: 14px 30px;
             font-size: 1em;
             font-weight: 600;
@@ -492,8 +502,7 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .btn-submit:hover {
-            background: #800020;  /* Бордовый */
-            color: #FFFDD0;  /* Кремовый текст */
+            background: #757575;  /* Темнее Nardo Gray */
             transform: translateY(-2px);
             box-shadow: 0 5px 20px rgba(128, 0, 32, 0.4);
         }
@@ -503,17 +512,21 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .auth-section {
-            background: #FFFDD0;
+            background: #9E9E9E;
             padding: 25px;
             border-radius: 15px;
             margin-bottom: 30px;
-            border: 1px solid #800020;
         }
 
         .auth-section h2 {
             margin-bottom: 20px;
             color: #800020;
             font-size: 1.5em;
+        }
+
+        .auth-section label {
+            color: #800020;
+            font-weight: 600;
         }
 
         .logout-link {
@@ -526,7 +539,6 @@ if (isset($_SESSION['user_id'])) {
 
         .logout-link:hover {
             text-decoration: underline;
-            color: #FFFDD0;
         }
 
         hr {
@@ -536,15 +548,9 @@ if (isset($_SESSION['user_id'])) {
             background: linear-gradient(to right, transparent, #800020, transparent);
         }
 
-        /* Стили для ссылок в success-banner */
         .success-banner a {
             color: #800020;
             font-weight: bold;
-            text-decoration: none;
-        }
-
-        .success-banner a:hover {
-            text-decoration: underline;
         }
 
         @media (max-width: 600px) {
@@ -576,14 +582,14 @@ if (isset($_SESSION['user_id'])) {
                 echo "<div class='success-banner'>$m</div>";
             }
             if (!empty($errors['db_error'])) {
-                echo "<div class='success-banner' style='background:#f8d7da; color:#721c24; border-left-color:#721c24;'>{$errors['db_error']}</div>";
+                echo "<div class='success-banner' style='background:#f8d7da; color:#721c24;'>{$errors['db_error']}</div>";
             }
             ?>
 
-            <!-- АВТОРИЗАЦИЯ -->
+            <!-- АВТОРИЗАЦИЯ (только если пользователь не авторизован) -->
             <?php if (!isset($_SESSION['user_id'])): ?>
                 <div class="auth-section">
-                    <h2>🔐 Авторизация</h2>
+                    <h2>🔐 Авторизация для редактирования</h2>
                     <?php if (!empty($loginError)): ?>
                         <span class="error-message"><?= $loginError ?></span><br>
                     <?php endif; ?>
@@ -605,7 +611,7 @@ if (isset($_SESSION['user_id'])) {
                 <hr>
             <?php else: ?>
                 <div class="success-banner">
-                    ✅ Вы авторизованы.
+                    ✅ Вы авторизованы как <?= htmlspecialchars($values['full_name']) ?>
                     <a href="?logout=1" class="logout-link">Выйти</a>
                 </div>
             <?php endif; ?>
@@ -691,8 +697,16 @@ if (isset($_SESSION['user_id'])) {
                     <?php endif; ?>
                 </div>
 
-                <button type="submit" class="btn-submit">✉️ Отправить анкету</button>
+                <button type="submit" class="btn-submit">
+                    <?= isset($_SESSION['user_id']) ? '✏️ Обновить анкету' : '✉️ Отправить анкету' ?>
+                </button>
             </form>
+            
+            <?php if (!isset($_SESSION['user_id'])): ?>
+                <p style="margin-top: 20px; text-align: center; color: #666; font-size: 0.85em;">
+                    * После отправки анкеты вы получите логин и пароль для редактирования данных
+                </p>
+            <?php endif; ?>
         </div>
     </div>
 </body>
