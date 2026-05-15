@@ -27,7 +27,7 @@ try {
 
 // Функция создания таблиц
 function createTables($pdo) {
-    // Таблица пользователей (добавляем новую таблицу)
+    // Таблица пользователей (для аутентификации)
     $sql_users = "
         CREATE TABLE IF NOT EXISTS users (
             id INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -36,12 +36,13 @@ function createTables($pdo) {
             application_id INT(10) UNSIGNED NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
-            FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE SET NULL
+            FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE SET NULL,
+            INDEX idx_login (login)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ";
     $pdo->exec($sql_users);
     
-    // Таблица заявок (добавляем поле updated_at)
+    // Таблица заявок
     $sql_applications = "
         CREATE TABLE IF NOT EXISTS applications (
             id INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -94,13 +95,13 @@ function createTables($pdo) {
 // Получение списка языков для формы
 $languagesList = $pdo->query("SELECT id, name FROM programming_languages ORDER BY name")->fetchAll();
 
-// Функция для генерации уникального логина
+// Функция генерации уникального логина
 function generateLogin($fullName, $pdo) {
-    // Очищаем и транслитерируем ФИО
+    // Очищаем ФИО от спецсимволов
     $cleanName = preg_replace('/[^a-zA-Zа-яА-Я]/u', '', $fullName);
     $cleanName = mb_substr($cleanName, 0, 15);
     
-    // Транслитерация
+    // Транслитерация русских букв
     $translit = [
         'а' => 'a', 'б' => 'b', 'в' => 'v', 'г' => 'g', 'д' => 'd', 'е' => 'e', 'ё' => 'e',
         'ж' => 'zh', 'з' => 'z', 'и' => 'i', 'й' => 'y', 'к' => 'k', 'л' => 'l', 'м' => 'm',
@@ -169,7 +170,6 @@ function getSavedFormDataFromCookie() {
 $loginError = '';
 $showLoginForm = false;
 $generatedCredentials = null;
-$credentialsJustGenerated = false;
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['login_action'])) {
     $login = trim($_POST['login'] ?? '');
@@ -223,7 +223,7 @@ if ($isAuthorized && $currentApplicationId) {
     }
 }
 
-// Обработка POST-запроса
+// Обработка POST-запроса (сохранение/обновление данных)
 $errors = [];
 $success = false;
 $formData = [];
@@ -247,19 +247,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
     } elseif (strlen($formData['full_name']) > 150) {
         $errors['full_name'] = 'ФИО не должно превышать 150 символов.';
     } elseif (!preg_match('/^[a-zA-Zа-яА-ЯёЁ\s\-]+$/u', $formData['full_name'])) {
-        $errors['full_name'] = 'ФИО может содержать только буквы (русские или латинские), пробелы и дефисы.';
+        $errors['full_name'] = 'ФИО может содержать только буквы (русские или латинские), пробелы и дефисы. Недопустимы цифры и специальные символы.';
     }
     
     if (empty($formData['phone'])) {
         $errors['phone'] = 'Поле "Телефон" обязательно для заполнения.';
     } elseif (!preg_match('/^(\+7|8)?[\s\-]?\(?[0-9]{3}\)?[\s\-]?[0-9]{3}[\s\-]?[0-9]{2}[\s\-]?[0-9]{2}$/', $formData['phone'])) {
-        $errors['phone'] = 'Введите корректный номер телефона.';
+        $errors['phone'] = 'Введите корректный номер телефона. Допустимые символы: цифры, +, -, пробелы, скобки. Пример: +7(123)456-78-90 или 8-123-456-78-90.';
     }
     
     if (empty($formData['email'])) {
         $errors['email'] = 'Поле "E-mail" обязательно для заполнения.';
     } elseif (!filter_var($formData['email'], FILTER_VALIDATE_EMAIL)) {
-        $errors['email'] = 'Введите корректный E-mail адрес.';
+        $errors['email'] = 'Введите корректный E-mail адрес. Допустимые символы: буквы, цифры, точки, дефисы, знак @. Пример: username@domain.com';
+    } elseif (!preg_match('/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', $formData['email'])) {
+        $errors['email'] = 'E-mail может содержать только латинские буквы, цифры, точки, дефисы и знак @.';
     }
     
     if (empty($formData['birth_date'])) {
@@ -270,7 +272,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
         $minDate = (new DateTime())->modify('-120 years');
         
         if (!$birthDate || $birthDate > $today) {
-            $errors['birth_date'] = 'Дата рождения не может быть в будущем.';
+            $errors['birth_date'] = 'Дата рождения не может быть в будущем. Формат: ГГГГ-ММ-ДД.';
         } elseif ($birthDate < $minDate) {
             $errors['birth_date'] = 'Укажите реальную дату рождения (не старше 120 лет).';
         }
@@ -311,105 +313,115 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
         exit;
     }
     
-    // Если нет ошибок - сохраняем в БД
-    if (empty($errors)) {
-        try {
-            $pdo->beginTransaction();
+    // Если нет ошибок - сохраняем/обновляем в БД
+    try {
+        $pdo->beginTransaction();
+        
+        if ($isAuthorized && $currentApplicationId) {
+            // ОБНОВЛЕНИЕ существующей заявки (для авторизованного пользователя)
+            $stmt = $pdo->prepare("
+                UPDATE applications 
+                SET full_name = :full_name, phone = :phone, email = :email, 
+                    birth_date = :birth_date, gender = :gender, bio = :bio, 
+                    contract_accepted = :contract_accepted
+                WHERE id = :id
+            ");
             
-            if ($isAuthorized && $currentApplicationId) {
-                // ОБНОВЛЕНИЕ существующей заявки
-                $stmt = $pdo->prepare("
-                    UPDATE applications 
-                    SET full_name = :full_name, phone = :phone, email = :email, 
-                        birth_date = :birth_date, gender = :gender, bio = :bio, 
-                        contract_accepted = :contract_accepted
-                    WHERE id = :id
-                ");
-                
-                $stmt->execute([
-                    ':full_name' => $formData['full_name'],
-                    ':phone' => $formData['phone'],
-                    ':email' => $formData['email'],
-                    ':birth_date' => $formData['birth_date'],
-                    ':gender' => $formData['gender'],
-                    ':bio' => $formData['bio'],
-                    ':contract_accepted' => $formData['contract'],
-                    ':id' => $currentApplicationId
-                ]);
-                
-                // Обновляем языки
-                $stmtDel = $pdo->prepare("DELETE FROM application_languages WHERE application_id = ?");
-                $stmtDel->execute([$currentApplicationId]);
-                
-                $stmtLang = $pdo->prepare("INSERT INTO application_languages (application_id, language_id) VALUES (?, ?)");
-                foreach ($formData['languages'] as $langId) {
-                    $stmtLang->execute([$currentApplicationId, $langId]);
-                }
-                
-                $success = true;
-            } else {
-                // НОВАЯ заявка
-                $stmt = $pdo->prepare("
-                    INSERT INTO applications (full_name, phone, email, birth_date, gender, bio, contract_accepted)
-                    VALUES (:full_name, :phone, :email, :birth_date, :gender, :bio, :contract_accepted)
-                ");
-                
-                $stmt->execute([
-                    ':full_name' => $formData['full_name'],
-                    ':phone' => $formData['phone'],
-                    ':email' => $formData['email'],
-                    ':birth_date' => $formData['birth_date'],
-                    ':gender' => $formData['gender'],
-                    ':bio' => $formData['bio'],
-                    ':contract_accepted' => $formData['contract']
-                ]);
-                
-                $applicationId = $pdo->lastInsertId();
-                
-                $stmtLang = $pdo->prepare("INSERT INTO application_languages (application_id, language_id) VALUES (?, ?)");
-                foreach ($formData['languages'] as $langId) {
-                    $stmtLang->execute([$applicationId, $langId]);
-                }
-                
-                // ГЕНЕРАЦИЯ логина и пароля
-                $login = generateLogin($formData['full_name'], $pdo);
-                $password = generatePassword();
-                $passwordHash = password_hash($password, PASSWORD_DEFAULT);
-                
-                $stmtUser = $pdo->prepare("INSERT INTO users (login, password_hash, application_id) VALUES (?, ?, ?)");
-                $stmtUser->execute([$login, $passwordHash, $applicationId]);
-                
-                $generatedCredentials = [
-                    'login' => $login,
-                    'password' => $password
-                ];
-                $credentialsJustGenerated = true;
-                
-                // Автоматически авторизуем пользователя
-                $_SESSION['user_id'] = $pdo->lastInsertId();
-                $_SESSION['user_login'] = $login;
-                $_SESSION['application_id'] = $applicationId;
-                
-                $success = true;
+            $stmt->execute([
+                ':full_name' => $formData['full_name'],
+                ':phone' => $formData['phone'],
+                ':email' => $formData['email'],
+                ':birth_date' => $formData['birth_date'],
+                ':gender' => $formData['gender'],
+                ':bio' => $formData['bio'],
+                ':contract_accepted' => $formData['contract'],
+                ':id' => $currentApplicationId
+            ]);
+            
+            // Обновляем языки
+            $stmtDel = $pdo->prepare("DELETE FROM application_languages WHERE application_id = ?");
+            $stmtDel->execute([$currentApplicationId]);
+            
+            $stmtLang = $pdo->prepare("INSERT INTO application_languages (application_id, language_id) VALUES (?, ?)");
+            foreach ($formData['languages'] as $langId) {
+                $stmtLang->execute([$currentApplicationId, $langId]);
             }
             
-            $pdo->commit();
+            $success = true;
+        } else {
+            // НОВАЯ заявка (первоначальная отправка формы)
+            $stmt = $pdo->prepare("
+                INSERT INTO applications (full_name, phone, email, birth_date, gender, bio, contract_accepted)
+                VALUES (:full_name, :phone, :email, :birth_date, :gender, :bio, :contract_accepted)
+            ");
             
-            saveFormDataToCookie($formData);
-            $formData = [];
-            setcookie('temp_form_data', '', time() - 3600, '/');
+            $stmt->execute([
+                ':full_name' => $formData['full_name'],
+                ':phone' => $formData['phone'],
+                ':email' => $formData['email'],
+                ':birth_date' => $formData['birth_date'],
+                ':gender' => $formData['gender'],
+                ':bio' => $formData['bio'],
+                ':contract_accepted' => $formData['contract']
+            ]);
             
-            header('Location: ' . strtok($_SERVER["REQUEST_URI"], '?') . '?success=1');
-            exit;
+            $applicationId = $pdo->lastInsertId();
             
-        } catch(PDOException $e) {
-            $pdo->rollBack();
-            $errors['database'] = 'Ошибка при сохранении данных: ' . $e->getMessage();
-            saveErrorsToCookie($errors);
-            setcookie('temp_form_data', json_encode($formData), 0, '/');
-            header('Location: ' . strtok($_SERVER["REQUEST_URI"], '?'));
-            exit;
+            // Вставка языков
+            $stmtLang = $pdo->prepare("INSERT INTO application_languages (application_id, language_id) VALUES (?, ?)");
+            foreach ($formData['languages'] as $langId) {
+                $stmtLang->execute([$applicationId, $langId]);
+            }
+            
+            // Генерация логина и пароля
+            $login = generateLogin($formData['full_name'], $pdo);
+            $password = generatePassword();
+            $passwordHash = password_hash($password, PASSWORD_DEFAULT);
+            
+            // Создание пользователя
+            $stmtUser = $pdo->prepare("INSERT INTO users (login, password_hash, application_id) VALUES (?, ?, ?)");
+            $stmtUser->execute([$login, $passwordHash, $applicationId]);
+            
+            // Сохраняем сгенерированные учетные данные для отображения
+            $generatedCredentials = [
+                'login' => $login,
+                'password' => $password
+            ];
+            
+            // Автоматически авторизуем пользователя
+            $userId = $pdo->lastInsertId();
+            $_SESSION['user_id'] = $userId;
+            $_SESSION['user_login'] = $login;
+            $_SESSION['application_id'] = $applicationId;
+            
+            $success = true;
         }
+        
+        $pdo->commit();
+        
+        // Сохраняем данные в Cookies для автозаполнения
+        saveFormDataToCookie($formData);
+        
+        // Очищаем временные данные
+        $formData = [];
+        setcookie('temp_form_data', '', time() - 3600, '/');
+        
+        // Перенаправляем с параметром success и учетными данными
+        $redirectUrl = strtok($_SERVER["REQUEST_URI"], '?') . '?success=1';
+        if ($generatedCredentials) {
+            // Сохраняем учетные данные в сессии для отображения после редиректа
+            $_SESSION['generated_credentials'] = $generatedCredentials;
+        }
+        header('Location: ' . $redirectUrl);
+        exit;
+        
+    } catch(PDOException $e) {
+        $pdo->rollBack();
+        $errors['database'] = 'Ошибка при сохранении данных: ' . $e->getMessage();
+        saveErrorsToCookie($errors);
+        setcookie('temp_form_data', json_encode($formData), 0, '/');
+        header('Location: ' . strtok($_SERVER["REQUEST_URI"], '?'));
+        exit;
     }
 }
 
@@ -417,29 +429,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
 if (isset($_GET['success']) && $_GET['success'] == 1) {
     $success = true;
     
-    // Проверяем, есть ли сгенерированные учетные данные в сессии
-    if (isset($_SESSION['just_generated_credentials'])) {
-        $generatedCredentials = $_SESSION['just_generated_credentials'];
-        unset($_SESSION['just_generated_credentials']);
+    // Получаем учетные данные из сессии, если они есть
+    if (isset($_SESSION['generated_credentials'])) {
+        $generatedCredentials = $_SESSION['generated_credentials'];
+        unset($_SESSION['generated_credentials']);
     }
 }
 
-// Сохраняем учетные данные в сессию, если они были сгенерированы
-if ($credentialsJustGenerated && $generatedCredentials) {
-    $_SESSION['just_generated_credentials'] = $generatedCredentials;
-}
-
+// Получаем ошибки из Cookies
 $errors = getErrorsFromCookie();
 
+// Получаем временные данные формы (из ошибочного POST-запроса)
 $tempFormData = [];
 if (isset($_COOKIE['temp_form_data'])) {
     $tempFormData = json_decode($_COOKIE['temp_form_data'], true);
     setcookie('temp_form_data', '', time() - 3600, '/');
 }
 
+// Получаем сохраненные данные (успешные отправки)
 $savedFormData = getSavedFormDataFromCookie();
 
 // Формируем данные для отображения
+// Приоритет: 1. Временные данные (ошибки) 2. Данные авторизованного пользователя 3. Сохраненные из Cookies 4. Пустые
 if (!empty($tempFormData)) {
     $displayFormData = $tempFormData;
 } elseif ($isAuthorized && $userApplicationData) {
@@ -450,6 +461,7 @@ if (!empty($tempFormData)) {
     $displayFormData = [];
 }
 
+// Функции для отображения полей с сохранёнными значениями
 function getValue($fieldName, $formData, $default = '') {
     if (isset($formData[$fieldName])) {
         return htmlspecialchars($formData[$fieldName]);
@@ -533,6 +545,7 @@ function getGenderText($gender) {
             padding: 30px;
         }
         
+        /* Стили для панели авторизации */
         .auth-bar {
             background: #f0f2f5;
             padding: 15px 20px;
@@ -573,14 +586,16 @@ function getGenderText($gender) {
             font-size: 14px;
             cursor: pointer;
             border: none;
+            font-family: inherit;
         }
         
         .auth-bar .btn-login:hover {
             background: #4a5c68;
         }
         
+        /* Модальное окно входа */
         .login-modal {
-            display: <?= $showLoginForm || isset($_GET['show_login']) ? 'flex' : 'none' ?>;
+            display: none;
             position: fixed;
             top: 0;
             left: 0;
@@ -611,6 +626,7 @@ function getGenderText($gender) {
             margin-bottom: 15px;
             border: 2px solid #e0e0e0;
             border-radius: 8px;
+            font-size: 14px;
         }
         
         .login-modal-content button {
@@ -621,13 +637,22 @@ function getGenderText($gender) {
             border: none;
             border-radius: 8px;
             cursor: pointer;
+            font-size: 14px;
         }
         
-        .login-modal-content .close {
+        .login-modal-content button.close {
             margin-top: 10px;
             background: #95a5a6;
         }
         
+        .login-error {
+            color: #e74c3c;
+            margin-bottom: 10px;
+            font-size: 12px;
+            text-align: center;
+        }
+        
+        /* Блок с учетными данными */
         .credentials-box {
             background: #e8f5e9;
             border: 2px solid #4caf50;
@@ -648,6 +673,13 @@ function getGenderText($gender) {
             font-size: 16px;
         }
         
+        .credentials-box .note {
+            font-size: 12px;
+            margin-top: 10px;
+            color: #666;
+        }
+        
+        /* Уведомление о редактировании */
         .edit-notice {
             background: #e3f2fd;
             color: #1976d2;
@@ -713,32 +745,6 @@ function getGenderText($gender) {
         }
         
         .radio-group input[type="radio"] {
-            margin-right: 8px;
-            cursor: pointer;
-        }
-        
-        .checkbox-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-        }
-        
-        .checkbox-group label {
-            display: flex;
-            align-items: center;
-            font-weight: normal;
-            cursor: pointer;
-            background: #f0f2f5;
-            padding: 8px 15px;
-            border-radius: 20px;
-            transition: all 0.3s ease;
-        }
-        
-        .checkbox-group label:hover {
-            background: #e0e4e8;
-        }
-        
-        .checkbox-group input[type="checkbox"] {
             margin-right: 8px;
             cursor: pointer;
         }
@@ -867,7 +873,7 @@ function getGenderText($gender) {
                         <input type="text" name="login" placeholder="Логин" required>
                         <input type="password" name="password" placeholder="Пароль" required>
                         <?php if ($loginError): ?>
-                            <div style="color: red; margin-bottom: 10px; font-size: 12px;"><?= $loginError ?></div>
+                            <div class="login-error"><?= htmlspecialchars($loginError) ?></div>
                         <?php endif; ?>
                         <button type="submit" name="login_action" value="1">Войти</button>
                         <button type="button" class="close" onclick="document.getElementById('loginModal').style.display='none'">Закрыть</button>
@@ -875,55 +881,21 @@ function getGenderText($gender) {
                 </div>
             </div>
             
-            <!-- Уведомление о режиме редактирования -->
-            <?php if ($isAuthorized && $userApplicationData): ?>
-                <div class="edit-notice">
-                    ✏️ Вы авторизованы. Вы можете редактировать свои данные. Все изменения будут сохранены.
-                </div>
-            <?php endif; ?>
-            
-            <!-- Отображение сгенерированных учетных данных -->
-            <?php if (isset($generatedCredentials) && $generatedCredentials): ?>
+            <!-- Отображение сгенерированных учетных данных при успешной отправке формы -->
+            <?php if ($success && $generatedCredentials): ?>
                 <div class="credentials-box">
-                    <h4>🎉 Регистрация успешна!</h4>
-                    <p><strong>Логин:</strong> <?= htmlspecialchars($generatedCredentials['login']) ?></p>
-                    <p><strong>Пароль:</strong> <?= htmlspecialchars($generatedCredentials['password']) ?></p>
-                    <p style="font-size: 12px; margin-top: 10px;">⚠️ Сохраните эти данные для входа в аккаунт!</p>
+                    <h4>🎉 Регистрация успешно завершена!</h4>
+                    <p><strong>Ваш логин:</strong> <?= htmlspecialchars($generatedCredentials['login']) ?></p>
+                    <p><strong>Ваш пароль:</strong> <?= htmlspecialchars($generatedCredentials['password']) ?></p>
+                    <p class="note">⚠️ Сохраните эти данные! Они понадобятся вам для входа и редактирования анкеты.</p>
                 </div>
-            <?php endif; ?>
-            
-            <?php if ($success && !$generatedCredentials): ?>
+            <?php elseif ($success && !$generatedCredentials): ?>
                 <div class="success-message">
-                    ✅ Данные успешно <?= $isAuthorized ? 'обновлены' : 'сохранены' ?>!
+                    ✅ Ваши данные успешно обновлены!
                 </div>
             <?php endif; ?>
             
-            <?php if (!empty($errors)): ?>
-                <div class="error-summary">
-                    <strong>❌ Пожалуйста, исправьте следующие ошибки:</strong>
-                    <ul>
-                        <?php foreach ($errors as $error): ?>
-                            <li><?= htmlspecialchars($error) ?></li>
-                        <?php endforeach; ?>
-                    </ul>
-                </div>
-            <?php endif; ?>
-            
-            <form method="POST" action="">
-                <!-- 1. ФИО -->
-                <div class="form-group">
-                    <label>ФИО <span class="required">*</span></label>
-                    <input type="text" 
-                           name="full_name" 
-                           value="<?= getValue('full_name', $displayFormData) ?>"
-                           class="<?= isset($errors['full_name']) ? 'form-error' : '' ?>"
-                           placeholder="Иванов Иван Иванович">
-                    <?php if (isset($errors['full_name'])): ?>
-                        <span class="error-message"><?= $errors['full_name'] ?></span>
-                    <?php endif; ?>
-                    <div class="info-text">Допустимые символы: русские и латинские буквы, пробелы, дефисы</div>
-                </div>
-                
-                <!-- 2. Телефон -->
-                <div class="form-group">
-                    <label>Телефон <span class="required">*</span
+            <!-- Уведомление о режиме редактирования для авторизованных пользователей -->
+            <?php if ($isAuthorized && $userApplicationData && !$success): ?>
+                <div class="edit-notice">
+                    ✏️
