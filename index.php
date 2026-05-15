@@ -325,7 +325,7 @@ if (isset($_SESSION['user_id'])) {
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #800020;  /* Бордовый цвет */
             min-height: 100vh;
             padding: 20px;
         }
@@ -352,10 +352,11 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            background: #FFFDD0;  /* Кремовый */
+            color: #800020;  /* Бордовый текст */
             padding: 30px;
             text-align: center;
+            border-bottom: 3px solid #800020;
         }
 
         .header h1 {
@@ -364,8 +365,9 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .header p {
-            opacity: 0.9;
+            opacity: 0.8;
             font-size: 0.95em;
+            color: #800020;
         }
 
         .form-content {
@@ -404,8 +406,8 @@ if (isset($_SESSION['user_id'])) {
         select:focus,
         textarea:focus {
             outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            border-color: #FFFDD0;
+            box-shadow: 0 0 0 3px rgba(255, 253, 208, 0.3);
         }
 
         .form-error {
@@ -421,12 +423,13 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .success-banner {
-            background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
-            color: #155724;
+            background: linear-gradient(135deg, #FFFDD0 0%, #FFE4B5 100%);
+            color: #800020;
             padding: 15px 20px;
             border-radius: 10px;
             margin-bottom: 20px;
             animation: fadeIn 0.5s ease-out;
+            border-left: 4px solid #800020;
         }
 
         @keyframes fadeIn {
@@ -476,21 +479,23 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .btn-submit {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
+            background: #FFFDD0;  /* Кремовый */
+            color: #800020;  /* Бордовый текст */
+            border: 2px solid #800020;
             padding: 14px 30px;
             font-size: 1em;
             font-weight: 600;
             border-radius: 10px;
             cursor: pointer;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            transition: all 0.3s ease;
             width: 100%;
         }
 
         .btn-submit:hover {
+            background: #800020;  /* Бордовый */
+            color: #FFFDD0;  /* Кремовый текст */
             transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+            box-shadow: 0 5px 20px rgba(128, 0, 32, 0.4);
         }
 
         .btn-submit:active {
@@ -498,35 +503,48 @@ if (isset($_SESSION['user_id'])) {
         }
 
         .auth-section {
-            background: #f8f9fa;
+            background: #FFFDD0;
             padding: 25px;
             border-radius: 15px;
             margin-bottom: 30px;
+            border: 1px solid #800020;
         }
 
         .auth-section h2 {
             margin-bottom: 20px;
-            color: #333;
+            color: #800020;
             font-size: 1.5em;
         }
 
         .logout-link {
             display: inline-block;
             margin-top: 10px;
-            color: #667eea;
+            color: #800020;
             text-decoration: none;
             font-weight: 600;
         }
 
         .logout-link:hover {
             text-decoration: underline;
+            color: #FFFDD0;
         }
 
         hr {
             margin: 30px 0;
             border: none;
             height: 1px;
-            background: linear-gradient(to right, transparent, #ccc, transparent);
+            background: linear-gradient(to right, transparent, #800020, transparent);
+        }
+
+        /* Стили для ссылок в success-banner */
+        .success-banner a {
+            color: #800020;
+            font-weight: bold;
+            text-decoration: none;
+        }
+
+        .success-banner a:hover {
+            text-decoration: underline;
         }
 
         @media (max-width: 600px) {
@@ -558,7 +576,7 @@ if (isset($_SESSION['user_id'])) {
                 echo "<div class='success-banner'>$m</div>";
             }
             if (!empty($errors['db_error'])) {
-                echo "<div class='success-banner' style='background:#f8d7da; color:#721c24;'>{$errors['db_error']}</div>";
+                echo "<div class='success-banner' style='background:#f8d7da; color:#721c24; border-left-color:#721c24;'>{$errors['db_error']}</div>";
             }
             ?>
 
