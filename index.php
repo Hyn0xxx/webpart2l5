@@ -1,4 +1,3 @@
-```php
 <?php
 session_start();
 
@@ -124,16 +123,14 @@ if (isset($_POST['login_submit'])) {
 }
 
 // --------------------
-// ОБРАБОТКА ФОРМЫ
+// ОБРАБОТКА ОСНОВНОЙ ФОРМЫ
 // --------------------
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
 
     $errors = false;
 
-    // --------------------
     // ФИО
-    // --------------------
 
     if (
         empty($_POST['full_name']) ||
@@ -155,9 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
         time() + 30 * 24 * 3600
     );
 
-    // --------------------
     // ТЕЛЕФОН
-    // --------------------
 
     if (
         empty($_POST['phone']) ||
@@ -182,9 +177,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
         time() + 30 * 24 * 3600
     );
 
-    // --------------------
     // EMAIL
-    // --------------------
 
     if (
         empty($_POST['email']) ||
@@ -206,9 +199,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
         time() + 30 * 24 * 3600
     );
 
-    // --------------------
-    // ДАТА РОЖДЕНИЯ
-    // --------------------
+    // ДАТА
 
     if (empty($_POST['birth_date'])) {
 
@@ -227,9 +218,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
         time() + 30 * 24 * 3600
     );
 
-    // --------------------
     // ПОЛ
-    // --------------------
 
     if (
         empty($_POST['gender']) ||
@@ -251,9 +240,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
         time() + 30 * 24 * 3600
     );
 
-    // --------------------
     // ЯЗЫКИ
-    // --------------------
 
     $selectedLangs = $_POST['languages'] ?? [];
 
@@ -288,9 +275,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
         time() + 30 * 24 * 3600
     );
 
-    // --------------------
     // BIO
-    // --------------------
 
     setcookie(
         'bio_value',
@@ -298,9 +283,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
         time() + 30 * 24 * 3600
     );
 
-    // --------------------
     // CONTRACT
-    // --------------------
 
     if (!isset($_POST['contract'])) {
 
@@ -319,9 +302,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
         time() + 30 * 24 * 3600
     );
 
-    // --------------------
-    // ЕСЛИ ЕСТЬ ОШИБКИ
-    // --------------------
+    // ЕСЛИ ОШИБКИ
 
     if ($errors) {
 
@@ -337,9 +318,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
 
         $pdo->beginTransaction();
 
-        // --------------------
         // UPDATE
-        // --------------------
 
         if (isset($_SESSION['user_id'])) {
 
@@ -369,8 +348,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
                 $appId
             ]);
 
-            // удаляем старые языки
-
             $pdo->prepare("
                 DELETE FROM application_languages
                 WHERE application_id=?
@@ -378,9 +355,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
 
         } else {
 
-            // --------------------
             // INSERT
-            // --------------------
 
             $login = generateLogin();
 
@@ -421,15 +396,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
 
             $appId = $pdo->lastInsertId();
 
-            // показываем логин/пароль один раз
-
             $_SESSION['generated_login'] = $login;
             $_SESSION['generated_password'] = $plainPassword;
         }
 
-        // --------------------
-        // СОХРАНЕНИЕ ЯЗЫКОВ
-        // --------------------
+        // ЯЗЫКИ
 
         $stmtLang = $pdo->prepare("
             INSERT INTO application_languages
@@ -481,9 +452,7 @@ if (!empty($_COOKIE['save_success'])) {
     $messages[] = '✅ Данные успешно сохранены!';
 }
 
-// --------------------
-// ЛОГИН И ПАРОЛЬ
-// --------------------
+// ЛОГИН И ПАРОЛЬ ОДИН РАЗ
 
 if (!empty($_SESSION['generated_login'])) {
 
@@ -496,9 +465,7 @@ if (!empty($_SESSION['generated_login'])) {
     unset($_SESSION['generated_password']);
 }
 
-// --------------------
 // ОШИБКИ
-// --------------------
 
 $fields = [
     'full_name',
@@ -521,9 +488,7 @@ foreach ($fields as $f) {
     }
 }
 
-// --------------------
 // COOKIE VALUES
-// --------------------
 
 $values = [];
 
@@ -548,9 +513,7 @@ $values['languages'] =
     ? unserialize($values['languages'])
     : [];
 
-// --------------------
 // ДАННЫЕ АВТОРИЗОВАННОГО
-// --------------------
 
 if (isset($_SESSION['user_id'])) {
 
@@ -594,33 +557,37 @@ if (isset($_SESSION['user_id'])) {
 
 <!DOCTYPE html>
 <html lang="ru">
+
 <head>
-    <meta charset="UTF-8">
-    <title>Анкета (Lab 5)</title>
 
-    <style>
+<meta charset="UTF-8">
 
-        .form-error {
-            border: 2px solid #e74c3c !important;
-            background-color: #fff6f6 !important;
-        }
+<title>Анкета (Lab 5)</title>
 
-        .error-message {
-            color: #e74c3c;
-            font-size: 0.85em;
-            display: block;
-            margin-top: 5px;
-        }
+<style>
 
-        .success-banner {
-            background: #d4edda;
-            color: #155724;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }
+.form-error {
+    border: 2px solid #e74c3c !important;
+    background-color: #fff6f6 !important;
+}
 
-    </style>
+.error-message {
+    color: #e74c3c;
+    font-size: 0.85em;
+    display: block;
+    margin-top: 5px;
+}
+
+.success-banner {
+    background: #d4edda;
+    color: #155724;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+}
+
+</style>
+
 </head>
 
 <body>
@@ -634,7 +601,6 @@ if (isset($_SESSION['user_id'])) {
 <div class="form-content">
 
 <?php
-
 foreach($messages as $m) {
     echo "<div class='success-banner'>$m</div>";
 }
@@ -642,20 +608,23 @@ foreach($messages as $m) {
 if (!empty($errors['db_error'])) {
     echo "<div class='error-summary'>{$errors['db_error']}</div>";
 }
-
 ?>
 
 <!-- АВТОРИЗАЦИЯ -->
 
 <?php if (!isset($_SESSION['user_id'])): ?>
 
-<h2>Авторизация</h2>
+<div class="form-group">
+
+<h2 style="margin-bottom:20px;">Авторизация</h2>
 
 <?php if (!empty($loginError)): ?>
 
-<div class="error-message">
+<span class="error-message">
     <?= $loginError ?>
-</div>
+</span>
+
+<br>
 
 <?php endif; ?>
 
@@ -665,7 +634,11 @@ if (!empty($errors['db_error'])) {
 
 <label>Логин</label>
 
-<input type="text" name="login">
+<input
+    type="text"
+    name="login"
+    class="<?= !empty($loginError) ? 'form-error' : '' ?>"
+>
 
 </div>
 
@@ -673,17 +646,27 @@ if (!empty($errors['db_error'])) {
 
 <label>Пароль</label>
 
-<input type="password" name="password">
+<input
+    type="password"
+    name="password"
+    class="<?= !empty($loginError) ? 'form-error' : '' ?>"
+>
 
 </div>
 
-<button type="submit" name="login_submit" class="btn-submit">
+<button
+    type="submit"
+    name="login_submit"
+    class="btn-submit"
+>
     Войти
 </button>
 
 </form>
 
-<hr><br>
+</div>
+
+<hr style="margin: 30px 0;">
 
 <?php else: ?>
 
@@ -890,4 +873,3 @@ if (!empty($errors['db_error'])) {
 
 </body>
 </html>
-```
