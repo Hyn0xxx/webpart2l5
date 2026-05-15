@@ -1,10 +1,5 @@
+```php
 <?php
-/**
- * Lab 5
- * Авторизация + редактирование формы
- * Session + Cookies + Backend validation
- */
-
 session_start();
 
 header('Content-Type: text/html; charset=UTF-8');
@@ -30,7 +25,7 @@ try {
         ]
     );
 } catch(PDOException $e) {
-    die('Ошибка подключения к БД: ' . $e->getMessage());
+    die('Ошибка подключения к базе данных: ' . $e->getMessage());
 }
 
 // --------------------
@@ -83,39 +78,53 @@ if (isset($_GET['logout'])) {
 // --------------------
 
 $messages = [];
+$loginError = '';
 
 if (isset($_POST['login_submit'])) {
 
     $login = trim($_POST['login'] ?? '');
-    $password = $_POST['password'] ?? '';
+    $password = trim($_POST['password'] ?? '');
 
-    $stmt = $pdo->prepare("
-        SELECT *
-        FROM applications
-        WHERE login = ?
-    ");
+    if (empty($login)) {
 
-    $stmt->execute([$login]);
+        $loginError = 'Введите логин';
 
-    $user = $stmt->fetch();
+    }
+    elseif (empty($password)) {
 
-    if ($user && password_verify($password, $user['password_hash'])) {
+        $loginError = 'Введите пароль';
 
-        session_regenerate_id(true);
+    }
+    else {
 
-        $_SESSION['user_id'] = $user['id'];
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM applications
+            WHERE login = ?
+        ");
 
-        header('Location: index.php');
-        exit();
+        $stmt->execute([$login]);
 
-    } else {
+        $user = $stmt->fetch();
 
-        $messages[] = "❌ Неверный логин или пароль";
+        if ($user && password_verify($password, $user['password_hash'])) {
+
+            session_regenerate_id(true);
+
+            $_SESSION['user_id'] = $user['id'];
+
+            header('Location: index.php');
+            exit();
+
+        } else {
+
+            $loginError = 'Неверный логин или пароль';
+        }
     }
 }
 
 // --------------------
-// ОБРАБОТКА POST
+// ОБРАБОТКА ФОРМЫ
 // --------------------
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
@@ -229,7 +238,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
 
         setcookie(
             'gender_error',
-            'Выберите корректный пол.',
+            'Выберите пол.',
             time() + 24 * 3600
         );
 
@@ -297,7 +306,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
 
         setcookie(
             'contract_error',
-            'Необходимо принять контракт.',
+            'Необходимо принять условия.',
             time() + 24 * 3600
         );
 
@@ -360,6 +369,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
                 $appId
             ]);
 
+            // удаляем старые языки
+
             $pdo->prepare("
                 DELETE FROM application_languages
                 WHERE application_id=?
@@ -410,12 +421,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
 
             $appId = $pdo->lastInsertId();
 
+            // показываем логин/пароль один раз
+
             $_SESSION['generated_login'] = $login;
             $_SESSION['generated_password'] = $plainPassword;
         }
 
         // --------------------
-        // ЯЗЫКИ
+        // СОХРАНЕНИЕ ЯЗЫКОВ
         // --------------------
 
         $stmtLang = $pdo->prepare("
@@ -461,8 +474,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_submit'])) {
 
 $errors = [];
 
-// success
-
 if (!empty($_COOKIE['save_success'])) {
 
     setcookie('save_success', '', 100);
@@ -470,20 +481,24 @@ if (!empty($_COOKIE['save_success'])) {
     $messages[] = '✅ Данные успешно сохранены!';
 }
 
-// логин пароль один раз
+// --------------------
+// ЛОГИН И ПАРОЛЬ
+// --------------------
 
 if (!empty($_SESSION['generated_login'])) {
 
     $messages[] =
-        '✅ Ваши данные для входа:<br><br>
-        Логин: <b>' . htmlspecialchars($_SESSION['generated_login']) . '</b><br>
-        Пароль: <b>' . htmlspecialchars($_SESSION['generated_password']) . '</b>';
+        "✅ Ваши данные для входа:<br><br>
+        Логин: <b>" . htmlspecialchars($_SESSION['generated_login']) . "</b><br>
+        Пароль: <b>" . htmlspecialchars($_SESSION['generated_password']) . "</b>";
 
     unset($_SESSION['generated_login']);
     unset($_SESSION['generated_password']);
 }
 
-// ошибки
+// --------------------
+// ОШИБКИ
+// --------------------
 
 $fields = [
     'full_name',
@@ -506,7 +521,9 @@ foreach ($fields as $f) {
     }
 }
 
-// значения
+// --------------------
+// COOKIE VALUES
+// --------------------
 
 $values = [];
 
@@ -532,7 +549,7 @@ $values['languages'] =
     : [];
 
 // --------------------
-// ДАННЫЕ ИЗ БД
+// ДАННЫЕ АВТОРИЗОВАННОГО
 // --------------------
 
 if (isset($_SESSION['user_id'])) {
@@ -578,110 +595,106 @@ if (isset($_SESSION['user_id'])) {
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
+    <meta charset="UTF-8">
+    <title>Анкета (Lab 5)</title>
 
-<title>Lab 5</title>
+    <style>
 
-<style>
+        .form-error {
+            border: 2px solid #e74c3c !important;
+            background-color: #fff6f6 !important;
+        }
 
-body {
-    font-family: Arial;
-    background: #f5f5f5;
-    padding: 20px;
-}
+        .error-message {
+            color: #e74c3c;
+            font-size: 0.85em;
+            display: block;
+            margin-top: 5px;
+        }
 
-.container {
-    max-width: 900px;
-    margin: auto;
-    background: white;
-    padding: 30px;
-    border-radius: 10px;
-}
+        .success-banner {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
 
-.form-group {
-    margin-bottom: 20px;
-}
-
-input, textarea, select {
-    width: 100%;
-    padding: 10px;
-}
-
-.form-error {
-    border: 2px solid red;
-}
-
-.error-message {
-    color: red;
-    font-size: 14px;
-}
-
-.success-banner {
-    background: #d4edda;
-    padding: 15px;
-    margin-bottom: 20px;
-}
-
-.login-block {
-    background: #eee;
-    padding: 20px;
-    margin-bottom: 20px;
-}
-
-button {
-    padding: 10px 20px;
-}
-
-</style>
-
+    </style>
 </head>
 
 <body>
 
 <div class="container">
 
-<h1>📝 Анкета разработчика</h1>
-
-<?php foreach($messages as $m): ?>
-
-<div class="success-banner">
-    <?= $m ?>
+<div class="header">
+    <h1>📝 Анкета разработчика</h1>
 </div>
 
-<?php endforeach; ?>
+<div class="form-content">
+
+<?php
+
+foreach($messages as $m) {
+    echo "<div class='success-banner'>$m</div>";
+}
+
+if (!empty($errors['db_error'])) {
+    echo "<div class='error-summary'>{$errors['db_error']}</div>";
+}
+
+?>
+
+<!-- АВТОРИЗАЦИЯ -->
 
 <?php if (!isset($_SESSION['user_id'])): ?>
 
-<div class="login-block">
-
 <h2>Авторизация</h2>
+
+<?php if (!empty($loginError)): ?>
+
+<div class="error-message">
+    <?= $loginError ?>
+</div>
+
+<?php endif; ?>
 
 <form method="POST">
 
 <div class="form-group">
-    <input type="text" name="login" placeholder="Логин">
+
+<label>Логин</label>
+
+<input type="text" name="login">
+
 </div>
 
 <div class="form-group">
-    <input type="password" name="password" placeholder="Пароль">
+
+<label>Пароль</label>
+
+<input type="password" name="password">
+
 </div>
 
-<button type="submit" name="login_submit">
+<button type="submit" name="login_submit" class="btn-submit">
     Войти
 </button>
 
 </form>
 
-</div>
+<hr><br>
 
 <?php else: ?>
 
-<p>
-    ✅ Вы авторизованы
+<div class="success-banner">
+    ✅ Вы авторизованы.
     <a href="?logout=1">Выйти</a>
-</p>
+</div>
 
 <?php endif; ?>
+
+<!-- ОСНОВНАЯ ФОРМА -->
 
 <form action="" method="POST">
 
@@ -729,7 +742,7 @@ button {
 
 <div class="form-group">
 
-<label>Email *</label>
+<label>E-mail *</label>
 
 <input
     type="email"
@@ -769,7 +782,7 @@ button {
 
 </div>
 
-<div class="form-group">
+<div class="form-group <?= isset($errors['gender']) ? 'form-error' : '' ?>">
 
 <label>Пол *</label>
 
@@ -866,13 +879,15 @@ button {
 
 </div>
 
-<button type="submit">
-    Сохранить
+<button type="submit" class="btn-submit">
+    Отправить
 </button>
 
 </form>
 
 </div>
+</div>
 
 </body>
 </html>
+```
