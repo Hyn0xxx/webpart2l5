@@ -168,7 +168,6 @@ function getSavedFormDataFromCookie() {
 
 // Обработка входа
 $loginError = '';
-$showLoginForm = false;
 $generatedCredentials = null;
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['login_action'])) {
@@ -193,7 +192,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['login_action'])) {
             $loginError = 'Неверный логин или пароль';
         }
     }
-    $showLoginForm = true;
 }
 
 // Обработка выхода
@@ -247,21 +245,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
     } elseif (strlen($formData['full_name']) > 150) {
         $errors['full_name'] = 'ФИО не должно превышать 150 символов.';
     } elseif (!preg_match('/^[a-zA-Zа-яА-ЯёЁ\s\-]+$/u', $formData['full_name'])) {
-        $errors['full_name'] = 'ФИО может содержать только буквы (русские или латинские), пробелы и дефисы. Недопустимы цифры и специальные символы.';
+        $errors['full_name'] = 'ФИО может содержать только буквы (русские или латинские), пробелы и дефисы.';
     }
     
     if (empty($formData['phone'])) {
         $errors['phone'] = 'Поле "Телефон" обязательно для заполнения.';
     } elseif (!preg_match('/^(\+7|8)?[\s\-]?\(?[0-9]{3}\)?[\s\-]?[0-9]{3}[\s\-]?[0-9]{2}[\s\-]?[0-9]{2}$/', $formData['phone'])) {
-        $errors['phone'] = 'Введите корректный номер телефона. Допустимые символы: цифры, +, -, пробелы, скобки. Пример: +7(123)456-78-90 или 8-123-456-78-90.';
+        $errors['phone'] = 'Введите корректный номер телефона.';
     }
     
     if (empty($formData['email'])) {
         $errors['email'] = 'Поле "E-mail" обязательно для заполнения.';
     } elseif (!filter_var($formData['email'], FILTER_VALIDATE_EMAIL)) {
-        $errors['email'] = 'Введите корректный E-mail адрес. Допустимые символы: буквы, цифры, точки, дефисы, знак @. Пример: username@domain.com';
-    } elseif (!preg_match('/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', $formData['email'])) {
-        $errors['email'] = 'E-mail может содержать только латинские буквы, цифры, точки, дефисы и знак @.';
+        $errors['email'] = 'Введите корректный E-mail адрес.';
     }
     
     if (empty($formData['birth_date'])) {
@@ -272,7 +268,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
         $minDate = (new DateTime())->modify('-120 years');
         
         if (!$birthDate || $birthDate > $today) {
-            $errors['birth_date'] = 'Дата рождения не может быть в будущем. Формат: ГГГГ-ММ-ДД.';
+            $errors['birth_date'] = 'Дата рождения не может быть в будущем.';
         } elseif ($birthDate < $minDate) {
             $errors['birth_date'] = 'Укажите реальную дату рождения (не старше 120 лет).';
         }
@@ -318,7 +314,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
         $pdo->beginTransaction();
         
         if ($isAuthorized && $currentApplicationId) {
-            // ОБНОВЛЕНИЕ существующей заявки (для авторизованного пользователя)
+            // ОБНОВЛЕНИЕ существующей заявки
             $stmt = $pdo->prepare("
                 UPDATE applications 
                 SET full_name = :full_name, phone = :phone, email = :email, 
@@ -349,7 +345,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
             
             $success = true;
         } else {
-            // НОВАЯ заявка (первоначальная отправка формы)
+            // НОВАЯ заявка
             $stmt = $pdo->prepare("
                 INSERT INTO applications (full_name, phone, email, birth_date, gender, bio, contract_accepted)
                 VALUES (:full_name, :phone, :email, :birth_date, :gender, :bio, :contract_accepted)
@@ -373,7 +369,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
                 $stmtLang->execute([$applicationId, $langId]);
             }
             
-            // Генерация логина и пароля
+            // ГЕНЕРАЦИЯ логина и пароля
             $login = generateLogin($formData['full_name'], $pdo);
             $password = generatePassword();
             $passwordHash = password_hash($password, PASSWORD_DEFAULT);
@@ -382,7 +378,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
             $stmtUser = $pdo->prepare("INSERT INTO users (login, password_hash, application_id) VALUES (?, ?, ?)");
             $stmtUser->execute([$login, $passwordHash, $applicationId]);
             
-            // Сохраняем сгенерированные учетные данные для отображения
+            // Сохраняем сгенерированные учетные данные
             $generatedCredentials = [
                 'login' => $login,
                 'password' => $password
@@ -399,17 +395,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
         
         $pdo->commit();
         
-        // Сохраняем данные в Cookies для автозаполнения
+        // Сохраняем данные в Cookies
         saveFormDataToCookie($formData);
-        
-        // Очищаем временные данные
         $formData = [];
         setcookie('temp_form_data', '', time() - 3600, '/');
         
-        // Перенаправляем с параметром success и учетными данными
+        // Перенаправляем
         $redirectUrl = strtok($_SERVER["REQUEST_URI"], '?') . '?success=1';
         if ($generatedCredentials) {
-            // Сохраняем учетные данные в сессии для отображения после редиректа
             $_SESSION['generated_credentials'] = $generatedCredentials;
         }
         header('Location: ' . $redirectUrl);
@@ -428,29 +421,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['login_action'])) {
 // Получаем данные для отображения формы
 if (isset($_GET['success']) && $_GET['success'] == 1) {
     $success = true;
-    
-    // Получаем учетные данные из сессии, если они есть
     if (isset($_SESSION['generated_credentials'])) {
         $generatedCredentials = $_SESSION['generated_credentials'];
         unset($_SESSION['generated_credentials']);
     }
 }
 
-// Получаем ошибки из Cookies
 $errors = getErrorsFromCookie();
 
-// Получаем временные данные формы (из ошибочного POST-запроса)
 $tempFormData = [];
 if (isset($_COOKIE['temp_form_data'])) {
     $tempFormData = json_decode($_COOKIE['temp_form_data'], true);
     setcookie('temp_form_data', '', time() - 3600, '/');
 }
 
-// Получаем сохраненные данные (успешные отправки)
 $savedFormData = getSavedFormDataFromCookie();
 
 // Формируем данные для отображения
-// Приоритет: 1. Временные данные (ошибки) 2. Данные авторизованного пользователя 3. Сохраненные из Cookies 4. Пустые
 if (!empty($tempFormData)) {
     $displayFormData = $tempFormData;
 } elseif ($isAuthorized && $userApplicationData) {
@@ -461,7 +448,7 @@ if (!empty($tempFormData)) {
     $displayFormData = [];
 }
 
-// Функции для отображения полей с сохранёнными значениями
+// Функции для отображения полей
 function getValue($fieldName, $formData, $default = '') {
     if (isset($formData[$fieldName])) {
         return htmlspecialchars($formData[$fieldName]);
@@ -485,15 +472,6 @@ function isSelected($fieldName, $value, $formData) {
     }
     return '';
 }
-
-function getGenderText($gender) {
-    $genders = [
-        'male' => 'Мужской',
-        'female' => 'Женский',
-        'other' => 'Другой'
-    ];
-    return $genders[$gender] ?? '';
-}
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -502,348 +480,50 @@ function getGenderText($gender) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Анкета разработчика</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #e8ecf2;
-            min-height: 100vh;
-            padding: 20px;
-        }
-        
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
-            overflow: hidden;
-        }
-        
-        .header {
-            background: #5a6e7c;
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }
-        
-        .header h1 {
-            font-size: 28px;
-            margin-bottom: 10px;
-        }
-        
-        .header p {
-            opacity: 0.85;
-            font-size: 14px;
-        }
-        
-        .form-content {
-            padding: 30px;
-        }
-        
-        /* Стили для панели авторизации */
-        .auth-bar {
-            background: #f0f2f5;
-            padding: 15px 20px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-        
-        .auth-bar .user-info {
-            color: #5a6e7c;
-            font-weight: 500;
-        }
-        
-        .auth-bar .btn-logout {
-            background: #e74c3c;
-            color: white;
-            padding: 8px 16px;
-            border-radius: 6px;
-            text-decoration: none;
-            font-size: 14px;
-            transition: background 0.2s;
-        }
-        
-        .auth-bar .btn-logout:hover {
-            background: #c0392b;
-        }
-        
-        .auth-bar .btn-login {
-            background: #5a6e7c;
-            color: white;
-            padding: 8px 16px;
-            border-radius: 6px;
-            text-decoration: none;
-            font-size: 14px;
-            cursor: pointer;
-            border: none;
-            font-family: inherit;
-        }
-        
-        .auth-bar .btn-login:hover {
-            background: #4a5c68;
-        }
-        
-        /* Модальное окно входа */
-        .login-modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-        
-        .login-modal-content {
-            background: white;
-            padding: 30px;
-            border-radius: 15px;
-            width: 350px;
-            max-width: 90%;
-        }
-        
-        .login-modal-content h3 {
-            margin-bottom: 20px;
-            color: #5a6e7c;
-        }
-        
-        .login-modal-content input {
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 15px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            font-size: 14px;
-        }
-        
-        .login-modal-content button {
-            width: 100%;
-            padding: 10px;
-            background: #5a6e7c;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-        }
-        
-        .login-modal-content button.close {
-            margin-top: 10px;
-            background: #95a5a6;
-        }
-        
-        .login-error {
-            color: #e74c3c;
-            margin-bottom: 10px;
-            font-size: 12px;
-            text-align: center;
-        }
-        
-        /* Блок с учетными данными */
-        .credentials-box {
-            background: #e8f5e9;
-            border: 2px solid #4caf50;
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 25px;
-            text-align: center;
-        }
-        
-        .credentials-box h4 {
-            color: #2e7d32;
-            margin-bottom: 15px;
-        }
-        
-        .credentials-box p {
-            margin: 5px 0;
-            font-family: monospace;
-            font-size: 16px;
-        }
-        
-        .credentials-box .note {
-            font-size: 12px;
-            margin-top: 10px;
-            color: #666;
-        }
-        
-        /* Уведомление о редактировании */
-        .edit-notice {
-            background: #e3f2fd;
-            color: #1976d2;
-            padding: 10px 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-        
-        .form-group {
-            margin-bottom: 25px;
-        }
-        
-        .form-group label {
-            display: block;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: #333;
-            font-size: 14px;
-        }
-        
-        .form-group label .required {
-            color: #e74c3c;
-            margin-left: 5px;
-        }
-        
-        .form-group input[type="text"],
-        .form-group input[type="tel"],
-        .form-group input[type="email"],
-        .form-group input[type="date"],
-        .form-group select,
-        .form-group textarea {
-            width: 100%;
-            padding: 12px 15px;
-            border: 2px solid #e0e0e0;
-            border-radius: 10px;
-            font-size: 14px;
-            transition: all 0.3s ease;
-            font-family: inherit;
-            background: #fafafa;
-        }
-        
-        .form-group input:focus,
-        .form-group select:focus,
-        .form-group textarea:focus {
-            outline: none;
-            border-color: #5a6e7c;
-            box-shadow: 0 0 0 3px rgba(90, 110, 124, 0.1);
-            background: white;
-        }
-        
-        .radio-group {
-            display: flex;
-            gap: 20px;
-            flex-wrap: wrap;
-        }
-        
-        .radio-group label {
-            display: flex;
-            align-items: center;
-            font-weight: normal;
-            cursor: pointer;
-        }
-        
-        .radio-group input[type="radio"] {
-            margin-right: 8px;
-            cursor: pointer;
-        }
-        
-        select[multiple] {
-            height: auto;
-            min-height: 150px;
-        }
-        
-        select[multiple] option {
-            padding: 8px;
-            cursor: pointer;
-        }
-        
-        select[multiple] option:checked {
-            background: #5a6e7c linear-gradient(0deg, #5a6e7c 0%, #5a6e7c 100%);
-            color: white;
-        }
-        
-        .error-message {
-            color: #e74c3c;
-            font-size: 12px;
-            margin-top: 5px;
-            display: block;
-        }
-        
-        .form-error {
-            border-color: #e74c3c !important;
-            background-color: #fff5f5 !important;
-        }
-        
-        .success-message {
-            background: #e8f5e9;
-            color: #2e7d32;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 25px;
-            border-left: 4px solid #4caf50;
-        }
-        
-        .error-summary {
-            background: #ffebee;
-            color: #c62828;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 25px;
-            border-left: 4px solid #f44336;
-        }
-        
-        .error-summary ul {
-            margin-left: 20px;
-            margin-top: 10px;
-        }
-        
-        .btn-submit {
-            background: #5a6e7c;
-            color: white;
-            border: none;
-            padding: 14px 30px;
-            font-size: 16px;
-            font-weight: 600;
-            border-radius: 10px;
-            cursor: pointer;
-            width: 100%;
-            transition: all 0.2s ease;
-        }
-        
-        .btn-submit:hover {
-            background: #4a5c68;
-            transform: translateY(-1px);
-        }
-        
-        .btn-submit:active {
-            transform: translateY(0);
-        }
-        
-        hr {
-            margin: 20px 0;
-            border: none;
-            height: 1px;
-            background: #e0e0e0;
-        }
-        
-        .info-text {
-            color: #666;
-            font-size: 12px;
-            margin-top: 5px;
-        }
-        
-        @media (max-width: 600px) {
-            .form-content {
-                padding: 20px;
-            }
-            
-            .radio-group {
-                flex-direction: column;
-                gap: 10px;
-            }
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #e8ecf2; min-height: 100vh; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; background: white; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); overflow: hidden; }
+        .header { background: #5a6e7c; color: white; padding: 30px; text-align: center; }
+        .header h1 { font-size: 28px; margin-bottom: 10px; }
+        .form-content { padding: 30px; }
+        .auth-bar { background: #f0f2f5; padding: 15px 20px; border-radius: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        .auth-bar .user-info { color: #5a6e7c; font-weight: 500; }
+        .auth-bar .btn-logout { background: #e74c3c; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 14px; }
+        .auth-bar .btn-logout:hover { background: #c0392b; }
+        .auth-bar .btn-login { background: #5a6e7c; color: white; padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; }
+        .auth-bar .btn-login:hover { background: #4a5c68; }
+        .login-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 1000; }
+        .login-modal-content { background: white; padding: 30px; border-radius: 15px; width: 350px; max-width: 90%; }
+        .login-modal-content h3 { margin-bottom: 20px; color: #5a6e7c; }
+        .login-modal-content input { width: 100%; padding: 10px; margin-bottom: 15px; border: 2px solid #e0e0e0; border-radius: 8px; }
+        .login-modal-content button { width: 100%; padding: 10px; background: #5a6e7c; color: white; border: none; border-radius: 8px; cursor: pointer; }
+        .login-modal-content button.close { margin-top: 10px; background: #95a5a6; }
+        .login-error { color: #e74c3c; margin-bottom: 10px; font-size: 12px; text-align: center; }
+        .credentials-box { background: #e8f5e9; border: 2px solid #4caf50; border-radius: 10px; padding: 20px; margin-bottom: 25px; text-align: center; }
+        .credentials-box h4 { color: #2e7d32; margin-bottom: 15px; }
+        .credentials-box p { margin: 5px 0; font-family: monospace; font-size: 16px; }
+        .credentials-box .note { font-size: 12px; margin-top: 10px; color: #666; }
+        .edit-notice { background: #e3f2fd; color: #1976d2; padding: 10px 15px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
+        .form-group { margin-bottom: 25px; }
+        .form-group label { display: block; font-weight: 600; margin-bottom: 8px; color: #333; font-size: 14px; }
+        .form-group label .required { color: #e74c3c; margin-left: 5px; }
+        .form-group input[type="text"], .form-group input[type="tel"], .form-group input[type="email"], .form-group input[type="date"], .form-group select, .form-group textarea { width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 14px; font-family: inherit; background: #fafafa; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #5a6e7c; background: white; }
+        .radio-group { display: flex; gap: 20px; flex-wrap: wrap; }
+        .radio-group label { display: flex; align-items: center; font-weight: normal; cursor: pointer; }
+        .radio-group input[type="radio"] { margin-right: 8px; }
+        select[multiple] { min-height: 150px; }
+        select[multiple] option:checked { background: #5a6e7c; color: white; }
+        .error-message { color: #e74c3c; font-size: 12px; margin-top: 5px; display: block; }
+        .form-error { border-color: #e74c3c !important; background-color: #fff5f5 !important; }
+        .success-message { background: #e8f5e9; color: #2e7d32; padding: 15px; border-radius: 10px; margin-bottom: 25px; border-left: 4px solid #4caf50; }
+        .error-summary { background: #ffebee; color: #c62828; padding: 15px; border-radius: 10px; margin-bottom: 25px; border-left: 4px solid #f44336; }
+        .error-summary ul { margin-left: 20px; margin-top: 10px; }
+        .btn-submit { background: #5a6e7c; color: white; border: none; padding: 14px 30px; font-size: 16px; font-weight: 600; border-radius: 10px; cursor: pointer; width: 100%; }
+        .btn-submit:hover { background: #4a5c68; }
+        hr { margin: 20px 0; border: none; height: 1px; background: #e0e0e0; }
+        .info-text { color: #666; font-size: 12px; margin-top: 5px; }
+        @media (max-width: 600px) { .form-content { padding: 20px; } .radio-group { flex-direction: column; gap: 10px; } }
     </style>
 </head>
 <body>
@@ -881,21 +561,86 @@ function getGenderText($gender) {
                 </div>
             </div>
             
-            <!-- Отображение сгенерированных учетных данных при успешной отправке формы -->
+            <!-- Отображение сгенерированных учетных данных -->
             <?php if ($success && $generatedCredentials): ?>
                 <div class="credentials-box">
                     <h4>🎉 Регистрация успешно завершена!</h4>
                     <p><strong>Ваш логин:</strong> <?= htmlspecialchars($generatedCredentials['login']) ?></p>
                     <p><strong>Ваш пароль:</strong> <?= htmlspecialchars($generatedCredentials['password']) ?></p>
-                    <p class="note">⚠️ Сохраните эти данные! Они понадобятся вам для входа и редактирования анкеты.</p>
+                    <p class="note">⚠️ Сохраните эти данные! Они понадобятся для входа и редактирования анкеты.</p>
                 </div>
             <?php elseif ($success && !$generatedCredentials): ?>
-                <div class="success-message">
-                    ✅ Ваши данные успешно обновлены!
+                <div class="success-message">✅ Ваши данные успешно обновлены!</div>
+            <?php endif; ?>
+            
+            <!-- Уведомление о режиме редактирования -->
+            <?php if ($isAuthorized && $userApplicationData && !$success): ?>
+                <div class="edit-notice">✏️ Вы авторизованы. Вы можете редактировать свои данные.</div>
+            <?php endif; ?>
+            
+            <?php if (!empty($errors)): ?>
+                <div class="error-summary">
+                    <strong>❌ Пожалуйста, исправьте следующие ошибки:</strong>
+                    <ul>
+                        <?php foreach ($errors as $error): ?>
+                            <li><?= htmlspecialchars($error) ?></li>
+                        <?php endforeach; ?>
+                    </ul>
                 </div>
             <?php endif; ?>
             
-            <!-- Уведомление о режиме редактирования для авторизованных пользователей -->
-            <?php if ($isAuthorized && $userApplicationData && !$success): ?>
-                <div class="edit-notice">
-                    ✏️
+            <form method="POST" action="">
+                <div class="form-group">
+                    <label>ФИО <span class="required">*</span></label>
+                    <input type="text" name="full_name" value="<?= getValue('full_name', $displayFormData) ?>" class="<?= isset($errors['full_name']) ? 'form-error' : '' ?>" placeholder="Иванов Иван Иванович">
+                    <?php if (isset($errors['full_name'])): ?>
+                        <span class="error-message"><?= $errors['full_name'] ?></span>
+                    <?php endif; ?>
+                </div>
+                
+                <div class="form-group">
+                    <label>Телефон <span class="required">*</span></label>
+                    <input type="tel" name="phone" value="<?= getValue('phone', $displayFormData) ?>" class="<?= isset($errors['phone']) ? 'form-error' : '' ?>" placeholder="+7(123)456-78-90">
+                    <?php if (isset($errors['phone'])): ?>
+                        <span class="error-message"><?= $errors['phone'] ?></span>
+                    <?php endif; ?>
+                </div>
+                
+                <div class="form-group">
+                    <label>E-mail <span class="required">*</span></label>
+                    <input type="email" name="email" value="<?= getValue('email', $displayFormData) ?>" class="<?= isset($errors['email']) ? 'form-error' : '' ?>" placeholder="ivan@example.com">
+                    <?php if (isset($errors['email'])): ?>
+                        <span class="error-message"><?= $errors['email'] ?></span>
+                    <?php endif; ?>
+                </div>
+                
+                <div class="form-group">
+                    <label>Дата рождения <span class="required">*</span></label>
+                    <input type="date" name="birth_date" value="<?= getValue('birth_date', $displayFormData) ?>" class="<?= isset($errors['birth_date']) ? 'form-error' : '' ?>">
+                    <?php if (isset($errors['birth_date'])): ?>
+                        <span class="error-message"><?= $errors['birth_date'] ?></span>
+                    <?php endif; ?>
+                </div>
+                
+                <div class="form-group">
+                    <label>Пол <span class="required">*</span></label>
+                    <div class="radio-group">
+                        <label><input type="radio" name="gender" value="male" <?= isChecked('gender', 'male', $displayFormData) ?>> Мужской</label>
+                        <label><input type="radio" name="gender" value="female" <?= isChecked('gender', 'female', $displayFormData) ?>> Женский</label>
+                        <label><input type="radio" name="gender" value="other" <?= isChecked('gender', 'other', $displayFormData) ?>> Другой</label>
+                    </div>
+                    <?php if (isset($errors['gender'])): ?>
+                        <span class="error-message"><?= $errors['gender'] ?></span>
+                    <?php endif; ?>
+                </div>
+                
+                <div class="form-group">
+                    <label>Любимый язык программирования <span class="required">*</span></label>
+                    <select name="languages[]" multiple size="6" class="<?= isset($errors['languages']) ? 'form-error' : '' ?>">
+                        <?php foreach ($languagesList as $lang): ?>
+                            <option value="<?= $lang['id'] ?>" <?= isSelected('languages', $lang['id'], $displayFormData) ?>><?= htmlspecialchars($lang['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="info-text">Удерживайте Ctrl (Cmd на Mac) для выбора нескольких языков</div>
+                    <?php if (isset($errors['languages'])): ?>
+                        <span class="error-message"><?= $errors['languages'] ?></span
